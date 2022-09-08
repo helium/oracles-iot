@@ -3,7 +3,7 @@ name = "poc-ingest"
 version = "0.1.0"
 edition = "2021"
 description = "PoC Ingest Server for the Helium Network"
-authors = ["Marc Nijdam <marc@nova.xyz>"]
+authors = ["Marc Nijdam <marc@nova-labs.com>"]
 license = "Apache-2.0"
 
 [dependencies]
