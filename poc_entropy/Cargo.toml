@@ -1,13 +1,13 @@
 [package]
-name = "poc-ingest"
+name = "poc-entropy"
 version = "0.1.0"
-description = "PoC Ingest Server for the Helium Network"
-authors.workspace = true
+description = "PoC Entropy Server for the Helium Network"
 edition.workspace = true
-license.workspace  = true
+authors.workspace = true
+license.workspace = true
 
 [dependencies]
-config = { workspace = true}
+config = {workspace = true}
 clap = {workspace = true}
 thiserror = {workspace = true}
 serde =  {workspace = true}
@@ -15,33 +15,37 @@ serde_json = {workspace = true}
 base64 = {workspace = true}
 sha2 = {workspace = true}
 http = {workspace = true}
-tonic = {workspace = true}
+hyper = "*"
+axum = { version = "0", features = ["headers"] }
+jsonrpsee = { version = "0", features = ["async-client", "http-client"] }
+tower-http = {version = "*", features = ["trace"]}
 triggered = {workspace = true}
 futures = {workspace = true}
 futures-util = {workspace = true}
 prost = {workspace = true}
-tokio = { workspace = true }
+bs58 = "*"
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+metrics = {workspace = true }
+metrics-exporter-prometheus = { workspace = true }
+tokio = { workspace = true }
 chrono = { workspace = true }
 helium-proto = { workspace = true }
 helium-crypto = { workspace = true }
 file-store = { path = "../file_store" }
 poc-metrics = { path = "../metrics" }
-metrics = {workspace = true }
-metrics-exporter-prometheus = { workspace = true }
 
 [package.metadata.deb]
 depends = "$auto"
 assets = [
   [
-    "target/release/poc-ingest",
-    "/opt/poc-ingest/bin/",
+    "target/release/poc-entropy",
+    "/opt/poc-entropy/bin/",
     "755",
   ],
   [
     "pkg/deb/env-template",
-    "/usr/share/poc-ingest/env-template",
+    "/usr/share/poc-entropy/env-template",
     "644",
   ],
 ]
