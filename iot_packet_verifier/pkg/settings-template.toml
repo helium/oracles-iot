@@ -6,27 +6,11 @@
 # Cache location for generated verified reports; Required
 cache = "/var/data/verified-reports"
 
-# Data credit burn period in minutes. (Default is 1)
-# burn_period = 1
-
-# Public key for the Data Credits Mint (devnet mint provided here)
-dc_mint = "dcuc8Amr83Wz27ZkQ2K9NS6r8zRpf1J6cvArEBDZDmm"
-# Public key for the DNT Mint (devnet mint provided here)
-dnt_mint = "iotEVVZLEywoTn1QdwNPddxPWszn3zFhEot3MfL9fns"
-# Public key for the HNT Mint (devnet mint provided here)
-hnt_mint = "hntyVP6YFm1Hg25TN9WGLqM12b8TQmcknKrdu1oxWux"
-
-# Solana RPC. This may contain a secret 
-solana_rpc = "http://localhost:8899"
-# Path to the keypair used to sign data credit burn solana transactions
-burn_keypair = ""
-# Path to the keypair used to authorize config server rpc calls
-config_keypair = ""
-# Solana cluster to use. "devnet" or "mainnet"
-cluster = "devnet"
-
 # URL for the config server
 org_url = ""
+
+# Path to the keypair used to authorize config server rpc calls
+config_keypair = ""
 
 # We will burn data credits from the solana chain every `burn_period` minutes.
 burn_period = 1
@@ -37,6 +21,18 @@ burn_period = 1
 # data credits will only be stored in the database. This is set to false by
 # default.
 enable_solana_integration = "false"
+
+[solana]
+# Solana RPC. This may contain a secret 
+rpc_url = "http://localhost:8899"
+# Path to the keypair used to sign data credit burn solana transactions
+burn_keypair = ""
+# Solana cluster to use. "devnet" or "mainnet"
+cluster = "devnet"
+# Public key for the Data Credits Mint
+dc_mint = "dcuc8Amr83Wz27ZkQ2K9NS6r8zRpf1J6cvArEBDZDmm"
+# Public key for the DNT Mint (IOT mint)
+dnt_mint = "iotEVVZLEywoTn1QdwNPddxPWszn3zFhEot3MfL9fns"
 
 [database]
 
