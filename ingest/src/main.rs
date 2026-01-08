@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use ingest::{server_chain, server_iot, server_mobile, Mode, Settings};
+use ingest::{server_chain, server_iot, /* server_mobile, */ Mode, Settings};  // server_mobile commented out - IoT repo only
 use std::path;
 
 #[derive(Debug, clap::Parser)]
@@ -45,10 +45,10 @@ impl Server {
         // Install the prometheus metrics exporter
         poc_metrics::start_metrics(&settings.metrics)?;
 
-        // run the grpc server in either iot, mobile 5g, or chain mode
+        // run the grpc server in either iot or chain mode (mobile removed from IoT repo)
         match settings.mode {
             Mode::Iot => server_iot::grpc_server(settings).await,
-            Mode::Mobile => server_mobile::grpc_server(settings).await,
+            Mode::Mobile => panic!("Mobile mode not supported in IoT repository"),  // Mobile mode removed
             Mode::Chain => server_chain::grpc_server(settings).await,
         }
     }

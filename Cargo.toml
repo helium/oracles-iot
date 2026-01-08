@@ -3,30 +3,28 @@ debug = true
 
 [workspace]
 members = [
-  "coverage_map",
-  "coverage_point_calculator",
+  # IoT-specific apps
+  "iot_config",
+  "iot_packet_verifier",
+  "iot_verifier",
+
+  # Multi-mode apps (will be pruned later)
+  "ingest",
+  "poc_entropy",
+  "price",
+  "reward_index",
+
+  # Shared libraries (will be git dependencies in Phase 5)
   "custom_tracing",
   "db_store",
   "denylist",
   "file_store",
   "file_store_oracles",
-  "ingest",
-  "iot_config",
-  "iot_packet_verifier",
-  "iot_verifier",
   "metrics",
-  "mobile_config",
-  "mobile_config_cli",
-  "mobile_packet_verifier",
-  "mobile_verifier",
-  "poc_entropy",
-  "price",
   "price_tracker",
-  "reward_index",
   "reward_scheduler",
   "solana",
   "task_manager",
-  "hex_assignments",
   "tls_init",
 ]
 resolver = "2"
