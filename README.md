@@ -1,51 +1,10 @@
-# Oracles [![CI](https://github.com/helium/oracles/actions/workflows/CI.yml/badge.svg)](https://github.com/helium/oracles/actions/workflows/CI.yml)
+# Helium IoT Oracles [![CI](https://github.com/helium/oracles-iot/actions/workflows/CI.yml/badge.svg)](https://github.com/helium/oracles-iot/actions/workflows/CI.yml)
 
-## Mobile
+Oracles for the Helium IoT Network.
 
-```mermaid
-flowchart TD
-    MI("`**Mobile Ingestor**
-        - Heartbeats (cbrs, wifi)
-        - Speedtests
-        - Data transfer sessions
-        - Subscriber Location Rewards (disco mapping)
-        - Coverage objects
-        - Radio thresholds (hip-84)
-    `")
-    MV("`**Mobile Verifier**
-        - Validates all incoming data 
-        - Calculates rewards at 01:30 UTC
-    `")
-    MPV("`**Mobile Packet Verifier**
-        - Burns DC for data transfer (on solana)
-    `")
-    MP("`**Mobile Price**
-        - Records Pyth price for MOBILE
-    `")
-    DB1[(Foundation owned db populated by helius)]
-    MC("`**Mobile Config**
-        - Provides access to on-chain data
-        - Stores pubkeys for remote systems
-    `")
-    MRI("`**Mobile Reward Index**
-        - Writes rewards to foundation db
-    `")
-    DB2[(Foundation owned db that stores reward totals)]
-    S[(Solana)]
-    MI -- S3 --> MV
-    MI -- S3 --> MPV
-    MPV -- S3 --> MV
-    MPV -- gRPC --> MC
-    MPV --> S
-    MP <--> S
-    MP -- S3 --> MV
-    DB1 --> MC
-    MC -- gRPC --> MV
-    MV -- S3 --> MRI
-    MRI --> DB2
-```
+> **Note**: This repository was split from the main [helium/oracles](https://github.com/helium/oracles) repository. For Mobile oracles, see [helium/oracles](https://github.com/helium/oracles).
 
-## IOT
+## Architecture
 
 ```mermaid
 flowchart TD
@@ -64,26 +23,100 @@ flowchart TD
     `")
     II("`**IOT Ingestor**
         - Beacons
-        - Wtinesses
+        - Witnesses
         - Long lived grpc streams
     `")
     IV("`**IOT Verifier**
-        - Validates all incoming data 
+        - Validates all incoming data
         - Calculates rewards at 01:30 UTC
     `")
     IE("`**IOT Entropy**
         - Creates entropy used by gateways and iot-verifier
     `")
+    IP("`**IOT Price**
+        - Records Pyth price for IOT
+    `")
     IRE("`**IOT Reward Index**
         - Writes rewards to foundation db
     `")
     DB2[(Foundation owned db that stores reward totals)]
+    S[(Solana)]
     DB1 --> IC
     IC -- gRPC --> HPR
     HPR -- s3 --> IPV
     II -- s3 --> IV
     IPV -- s3 --> IV
+    IPV --> S
     IE -- s3 --> IV
+    IP <--> S
+    IP -- s3 --> IV
     IV -- s3 --> IRE
     IRE --> DB2
 ```
+
+## Components
+
+### IoT Verifier
+PoC (Proof of Coverage) Verifier - validates beacon/witness reports, calculates rewards.
+
+### IoT Config
+Configuration APIs for IoT subnetwork - provides access to on-chain data.
+
+### IoT Packet Verifier
+Packet verification - burns Data Credits for data transfer on Solana.
+
+### Supporting Services
+- **Ingest**: PoC ingest server (IoT mode)
+- **Price**: Price oracle for IOT token
+- **Reward Index**: Writes rewards to foundation database
+- **PoC Entropy**: Creates entropy for gateways and verifier
+
+## Shared Libraries
+
+This repository depends on shared infrastructure libraries from the [oracles](https://github.com/helium/oracles) repository via git dependencies:
+
+- `file-store` and `file-store-oracles`: File-based storage abstractions
+- `db-store`: Database storage layer
+- `task-manager`: Task scheduling and management
+- `custom-tracing`: Tracing utilities
+- `poc-metrics`: Metrics collection
+- `tls-init`: TLS initialization
+- `price-tracker`: Price tracking utilities
+- `reward-scheduler`: Reward scheduling
+- `solana`: Solana blockchain integration
+- `denylist`: Denylist management
+
+## Development
+
+### Building
+
+```bash
+cargo build --release
+```
+
+### Testing
+
+```bash
+cargo test --workspace
+```
+
+### Local Development with Shared Libraries
+
+If you need to modify shared libraries during local development, you can use path overrides in the root `Cargo.toml`:
+
+```toml
+[patch."https://github.com/helium/oracles"]
+file-store = { path = "../oracles/file_store" }
+db-store = { path = "../oracles/db_store" }
+# Add other libraries as needed
+```
+
+Remember to remove these patches before committing.
+
+## Deployment
+
+IoT services are built as Debian packages and deployed via the CI/CD pipeline. Packages are uploaded to packagecloud at `helium/oracles-iot`.
+
+## Multi-Mode Applications
+
+Some applications in this repository (ingest, price, reward_index, poc_entropy) contain code for both IoT and Mobile networks. Mobile-specific code will be pruned in future updates.

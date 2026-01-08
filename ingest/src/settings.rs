@@ -47,7 +47,7 @@ pub struct Settings {
     pub metrics: poc_metrics::Settings,
     // mobile config client settings
     // optional to avoid having to define a client for IOT mode
-    pub config_client: Option<mobile_config::ClientSettings>,
+    // pub config_client: Option<mobile_config::ClientSettings>,  // Commented out - mobile-only (will be pruned)
     /// Key that can sign Chain Rewardable Entities messages
     pub chain_rewardable_entities_auth_key: Option<String>,
 }

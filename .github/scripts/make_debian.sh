@@ -108,10 +108,11 @@ gem install dotenv -v 2.8.1
 gem install fpm -v 1.14.2 # current as of 2022-11-08
 echo "ruby deps installed" 
 
-for config_path in "reward_index" "price" "ingest" "iot_config" "iot_packet_verifier" "iot_verifier" "poc_entropy"
+# IoT-specific packages only
+for config_path in "iot_config" "iot_packet_verifier" "iot_verifier" "ingest" "price" "reward_index" "poc_entropy"
 do
     oracle=$(echo $config_path | sed -E 's!\./([^/]+)/.+$!\1!' | sed -E 's!_!-!g')
-    
+
     echo "starting  $oracle $config_path $VERSION"
     write_unit_template $oracle
     echo "write_unit_template  $oracle done"
@@ -121,11 +122,12 @@ do
     echo "run_fpm  $oracle done"
 done
 
+# Upload to helium/oracles-iot packagecloud repo
 for deb in /tmp/*.deb
 do
     echo "uploading $deb"
     curl -u "${PACKAGECLOUD_API_KEY}:" \
          -F "package[distro_version_id]=210" \
          -F "package[package_file]=@$deb" \
-         https://packagecloud.io/api/v1/repos/helium/oracles/packages.json
+         https://packagecloud.io/api/v1/repos/helium/oracles-iot/packages.json
 done
