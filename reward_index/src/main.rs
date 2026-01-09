@@ -43,7 +43,7 @@ impl Cmd {
 }
 
 #[derive(Debug, clap::Args)]
-pub struct Server {}
+pub struct Server;
 
 impl Server {
     pub async fn run(&self, settings: &Settings) -> Result<()> {
@@ -51,7 +51,7 @@ impl Server {
         poc_metrics::start_metrics(&settings.metrics)?;
 
         // Create database pool
-        let app_name = format!("{}_{}", settings.mode, env!("CARGO_PKG_NAME"));
+        let app_name = format!("iot_{}", env!("CARGO_PKG_NAME"));
         let pool = settings.database.connect(&app_name).await?;
         sqlx::migrate!().run(&pool).await?;
 
