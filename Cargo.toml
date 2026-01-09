@@ -13,19 +13,6 @@ members = [
   "poc_entropy",
   "price",
   "reward_index",
-
-  # Shared libraries (will be git dependencies in Phase 5)
-  "custom_tracing",
-  "db_store",
-  "denylist",
-  "file_store",
-  "file_store_oracles",
-  "metrics",
-  "price_tracker",
-  "reward_scheduler",
-  "solana",
-  "task_manager",
-  "tls_init",
 ]
 resolver = "2"
 
@@ -111,6 +98,19 @@ tempfile = "3"
 csv = "*"
 strum = { version = "0", features = ["derive"] }
 strum_macros = "0"
+
+### Git dependencies from oracles (mobile) repo
+file-store = { git = "https://github.com/helium/oracles.git", branch = "main" }
+file-store-oracles = { git = "https://github.com/helium/oracles.git", branch = "main" }
+db-store = { git = "https://github.com/helium/oracles.git", branch = "main" }
+task-manager = { git = "https://github.com/helium/oracles.git", branch = "main" }
+custom-tracing = { git = "https://github.com/helium/oracles.git", branch = "main" }
+poc-metrics = { git = "https://github.com/helium/oracles.git", branch = "main" }
+tls-init = { git = "https://github.com/helium/oracles.git", branch = "main" }
+price-tracker = { git = "https://github.com/helium/oracles.git", branch = "main" }
+reward-scheduler = { git = "https://github.com/helium/oracles.git", branch = "main" }
+denylist = { git = "https://github.com/helium/oracles.git", branch = "main" }
+solana = { git = "https://github.com/helium/oracles.git", branch = "main" }
 
 ### AWS
 aws-config = "1.8"

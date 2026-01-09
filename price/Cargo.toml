@@ -29,13 +29,13 @@ rust_decimal_macros = { workspace = true }
 triggered = { workspace = true }
 humantime-serde = { workspace = true }
 
-custom-tracing = { path = "../custom_tracing" }
-file-store = { path = "../file_store" }
-file-store-oracles = { path = "../file_store_oracles" }
-poc-metrics = { path = "../metrics" }
-solana = { path = "../solana" }
-task-manager = { path = "../task_manager" }
-tls-init = { path = "../tls_init" }
+custom-tracing = { workspace = true }
+file-store = { workspace = true }
+file-store-oracles = { workspace = true }
+poc-metrics = { workspace = true }
+solana = { workspace = true }
+task-manager = { workspace = true }
+tls-init = { workspace = true }
 
 [dev-dependencies]
 temp-env = "0.3.6"
