@@ -31,17 +31,17 @@ chrono = { workspace = true }
 helium-proto = { workspace = true }
 helium-crypto = { workspace = true }
 helium-proto-crypto = { workspace = true }
-file-store = { path = "../file_store" }
-file-store-oracles = { path = "../file_store_oracles" }
-poc-metrics = { path = "../metrics" }
+file-store = { workspace = true }
+file-store-oracles = { workspace = true }
+poc-metrics = { workspace = true }
 metrics = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 # mobile-config = { path = "../mobile_config" }  # Removed - mobile-only dependency (will be pruned later)
-task-manager = { path = "../task_manager" }
+task-manager = { workspace = true }
 rand = { workspace = true }
-custom-tracing = { path = "../custom_tracing", features = ["grpc"] }
+custom-tracing = { workspace = true, features = ["grpc"] }
 humantime-serde = { workspace = true }
-tls-init = { path = "../tls_init" }
+tls-init = { workspace = true }
 
 [dev-dependencies]
 backon = "1"
