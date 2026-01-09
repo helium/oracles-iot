@@ -12,8 +12,6 @@ pub struct Settings {
     pub log: String,
     #[serde(default)]
     pub custom_tracing: custom_tracing::Settings,
-    /// Mode to run the server in (iot or mobile). Required
-    pub mode: Mode,
     /// Listen address. Required. Default is 0.0.0.0:9081
     #[serde(default = "default_listen_addr")]
     pub listen_addr: SocketAddr,
@@ -80,23 +78,13 @@ fn default_log() -> String {
     "ingest=debug,poc_store=info".to_string()
 }
 
-/// Mode to deploy the ingest engine in. Each mode exposes different submission
-/// grpc methods
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Mode {
-    Iot,
-    Mobile,
-    Chain,
-}
-
 impl Settings {
     /// Load Settings from a given path. Settings are loaded from a given
     /// optional path and can be overridden with environment variables.
     ///
     /// Environment overrides have the same name as the entries in the settings
-    /// file in uppercase and prefixed with "ENTROPY_". For example
-    /// "ENTROPY_LOG" will override the log setting.
+    /// file in uppercase and prefixed with "INGEST__". For example
+    /// "INGEST__LOG" will override the log setting.
     pub fn new<P: AsRef<Path>>(path: Option<P>) -> Result<Self, config::ConfigError> {
         let mut builder = Config::builder();
 

@@ -1,4 +1,4 @@
-use crate::Settings;
+use crate::settings::Settings;
 use anyhow::{Error, Result};
 use chrono::Utc;
 use file_store::{file_sink::FileSinkClient, file_upload};
@@ -380,11 +380,7 @@ pub async fn grpc_server(settings: &Settings) -> Result<()> {
         session_key_timeout: settings.session_key_timeout,
     };
 
-    tracing::info!(
-        "grpc listening on {} and server mode {:?}",
-        settings.listen_addr,
-        settings.mode
-    );
+    tracing::info!("grpc listening on {}", settings.listen_addr);
 
     TaskManager::builder()
         .add_task(file_upload_server)
