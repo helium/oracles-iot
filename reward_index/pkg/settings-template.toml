@@ -1,15 +1,11 @@
 
 # log settings for the application (RUST_LOG format). Default below
-# 
+#
 # log = "reward_index=debug"
 
 # Interval for checking verifier bucket (in seconds). Default below (15 minutes)
 #
 # interval = "15 minutes"
-
-# Mode to operate the indexer in. "iot" or "mobile"
-#
-mode = "iot"
 
 # Operation Fund key is required when mode = "iot"
 #
