@@ -1,4 +1,4 @@
-use crate::{db, extract, settings, telemetry, Settings};
+use crate::{db, extract, telemetry, Settings};
 use anyhow::{bail, Result};
 use chrono::{DateTime, Utc};
 use file_store::{file_info_poller::FileInfoStream, FileInfo, Stream};
@@ -28,7 +28,6 @@ pub struct Indexer {
     pool: PgPool,
     file_store_client: file_store::Client,
     bucket: String,
-    mode: settings::Mode,
     op_fund_key: String,
     unallocated_reward_key: String,
     reward_manifest_rx: Receiver<FileInfoStream<RewardManifest>>,
@@ -37,14 +36,9 @@ pub struct Indexer {
 #[derive(sqlx::Type, Debug, Clone, PartialEq, Eq, Hash)]
 #[sqlx(type_name = "reward_type", rename_all = "snake_case")]
 pub enum RewardType {
-    MobileGateway,
     IotGateway,
     IotOperational,
-    MobileSubscriber,
-    MobileServiceProvider,
-    MobileUnallocated,
     IotUnallocated,
-    MobilePromotion,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -65,7 +59,6 @@ impl Indexer {
         file_store_client: file_store::Client,
         bucket: String,
         reward_manifest_rx: Receiver<FileInfoStream<RewardManifest>>,
-        mode: settings::Mode,
         op_fund_key: String,
         unallocated_reward_key: String,
     ) -> Self {
@@ -73,7 +66,6 @@ impl Indexer {
             pool,
             file_store_client,
             bucket,
-            mode,
             op_fund_key,
             unallocated_reward_key,
             reward_manifest_rx,
@@ -92,14 +84,13 @@ impl Indexer {
             file_store_client,
             bucket,
             reward_manifest_rx,
-            settings.mode,
             settings.operation_fund_key()?,
             settings.unallocated_reward_entity_key.clone(),
         ))
     }
 
     pub async fn run(mut self, shutdown: triggered::Listener) -> Result<()> {
-        tracing::info!(mode = self.mode.to_string(), "starting index");
+        tracing::info!("starting index");
 
         loop {
             tokio::select! {
@@ -153,27 +144,14 @@ impl Indexer {
             reward_files,
         );
 
-        match self.mode {
-            settings::Mode::Iot => {
-                handle_iot_rewards(
-                    txn,
-                    reward_shares,
-                    &self.op_fund_key,
-                    &self.unallocated_reward_key,
-                    &manifest_time,
-                )
-                .await?;
-            }
-            settings::Mode::Mobile => {
-                handle_mobile_rewards(
-                    txn,
-                    reward_shares,
-                    &self.unallocated_reward_key,
-                    &manifest_time,
-                )
-                .await?;
-            }
-        };
+        handle_iot_rewards(
+            txn,
+            reward_shares,
+            &self.op_fund_key,
+            &self.unallocated_reward_key,
+            &manifest_time,
+        )
+        .await?;
 
         Ok(())
     }
@@ -215,41 +193,6 @@ pub async fn handle_iot_rewards(
         let share = proto::IotRewardShare::decode(msg)?;
         let (key, amount) = extract::iot_reward(share, op_fund_key, unallocated_reward_key)?;
         *rewards.entry(key).or_default() += amount;
-    }
-
-    for (reward_key, amount) in rewards {
-        db::insert(
-            &mut **txn,
-            reward_key.key,
-            amount,
-            reward_key.reward_type,
-            manifest_time,
-        )
-        .await?;
-    }
-
-    Ok(())
-}
-
-pub async fn handle_mobile_rewards(
-    txn: &mut Transaction<'_, Postgres>,
-    mut reward_shares: Stream<BytesMut>,
-    unallocated_reward_key: &str,
-    manifest_time: &DateTime<Utc>,
-) -> anyhow::Result<()> {
-    let mut rewards = HashMap::new();
-
-    while let Some(msg) = reward_shares.try_next().await? {
-        let share = proto::MobileRewardShare::decode(msg)?;
-        match extract::mobile_reward(share, unallocated_reward_key) {
-            Ok((key, amount)) => {
-                *rewards.entry(key).or_default() += amount;
-            }
-            Err(extract::ExtractError::UnsupportedType(unsupported)) => {
-                tracing::debug!("ignoring unsupported: {unsupported}");
-            }
-            Err(err) => bail!(err),
-        }
     }
 
     for (reward_key, amount) in rewards {
