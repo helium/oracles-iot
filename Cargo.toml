@@ -8,6 +8,9 @@ members = [
   "iot_packet_verifier",
   "iot_verifier",
 
+  # Shared libraries
+  "denylist",
+
   # Multi-mode apps (will be pruned later)
   "ingest",
   "poc_entropy",
@@ -99,6 +102,9 @@ csv = "*"
 strum = { version = "0", features = ["derive"] }
 strum_macros = "0"
 
+### Local workspace dependencies
+denylist = { path = "./denylist" }
+
 ### Git dependencies from oracles (mobile) repo
 file-store = { git = "https://github.com/helium/oracles.git", branch = "main" }
 file-store-oracles = { git = "https://github.com/helium/oracles.git", branch = "main" }
@@ -109,7 +115,6 @@ poc-metrics = { git = "https://github.com/helium/oracles.git", branch = "main" }
 tls-init = { git = "https://github.com/helium/oracles.git", branch = "main" }
 price-tracker = { git = "https://github.com/helium/oracles.git", branch = "main" }
 reward-scheduler = { git = "https://github.com/helium/oracles.git", branch = "main" }
-denylist = { git = "https://github.com/helium/oracles.git", branch = "main" }
 solana = { git = "https://github.com/helium/oracles.git", branch = "main" }
 
 ### AWS
