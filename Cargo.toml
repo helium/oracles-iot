@@ -11,7 +11,7 @@ members = [
   # Shared libraries
   "denylist",
 
-  # Multi-mode apps (will be pruned later)
+  # Duplicate apps reduced to only iot functionality
   "ingest",
   "poc_entropy",
   "price",
