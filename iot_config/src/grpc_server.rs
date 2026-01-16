@@ -11,7 +11,7 @@ use helium_proto::services::{
 };
 use std::{net::SocketAddr, time::Duration};
 use task_manager::ManagedTask;
-use tonic::transport::{self, ServerTlsConfig};
+use tonic::transport;
 
 pub struct GrpcServer {
     listen_addr: SocketAddr,
@@ -46,7 +46,6 @@ impl ManagedTask for GrpcServer {
     fn start_task(self: Box<Self>, shutdown: triggered::Listener) -> task_manager::TaskFuture {
         task_manager::spawn(async move {
             let grpc_server = transport::Server::builder()
-                .tls_config(ServerTlsConfig::new())?
                 .http2_keepalive_interval(Some(Duration::from_secs(250)))
                 .http2_keepalive_timeout(Some(Duration::from_secs(60)))
                 .layer(custom_tracing::grpc_layer::new_with_span(make_span))
