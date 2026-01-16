@@ -24,7 +24,7 @@ pub enum SubDaoClientBuilderError {
 impl SubDaoClient {
     pub fn from_settings(settings: &Settings) -> Result<Self, SubDaoClientBuilderError> {
         let channel = Endpoint::from(settings.url.clone())
-            .tls_config(ClientTlsConfig::new())?
+            .tls_config(ClientTlsConfig::new().with_enabled_roots())?
             .connect_timeout(Duration::from_secs(settings.connect_timeout))
             .timeout(Duration::from_secs(settings.rpc_timeout))
             .connect_lazy();
