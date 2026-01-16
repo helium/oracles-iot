@@ -4,7 +4,7 @@ use helium_crypto::{Keypair, PublicKey, PublicKeyBinary};
 use helium_proto::{services::iot_config, BlockchainRegionParamV1, Region};
 use helium_proto_crypto::{MsgSign, MsgVerify};
 use std::{sync::Arc, time::Duration};
-use tonic::transport::{Channel, Endpoint};
+use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
 
 pub mod org_client;
 mod settings;
@@ -79,9 +79,18 @@ macro_rules! call_with_retry {
 use crate::sub_dao_epoch_reward_info::SubDaoRewardInfoParseError;
 pub(crate) use call_with_retry;
 
+#[derive(Debug, thiserror::Error)]
+pub enum ClientBuilderError {
+    #[error("tonic channel err: {0}")]
+    Client(#[from] tonic::transport::Error),
+    #[error("helium crypto err: {0}")]
+    Crypto(#[from] helium_crypto::Error),
+}
+
 impl Client {
-    pub fn from_settings(settings: &Settings) -> Result<Self, Box<helium_crypto::Error>> {
+    pub fn from_settings(settings: &Settings) -> Result<Self, ClientBuilderError> {
         let channel = Endpoint::from(settings.url.clone())
+            .tls_config(ClientTlsConfig::new().with_enabled_roots())?
             .connect_timeout(Duration::from_secs(settings.connect_timeout))
             .timeout(Duration::from_secs(settings.rpc_timeout))
             .connect_lazy();

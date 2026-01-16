@@ -4,7 +4,7 @@ use helium_crypto::{Keypair, PublicKey};
 use helium_proto::services::sub_dao::{self, SubDaoEpochRewardInfoReqV1};
 use helium_proto_crypto::{MsgSign, MsgVerify};
 use std::{error::Error, sync::Arc, time::Duration};
-use tonic::transport::{Channel, Endpoint};
+use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
 
 #[derive(Clone)]
 pub struct SubDaoClient {
@@ -13,9 +13,18 @@ pub struct SubDaoClient {
     config_pubkey: PublicKey,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum SubDaoClientBuilderError {
+    #[error("tonic channel err: {0}")]
+    Client(#[from] tonic::transport::Error),
+    #[error("helium crypto err: {0}")]
+    Crypto(#[from] helium_crypto::Error),
+}
+
 impl SubDaoClient {
-    pub fn from_settings(settings: &Settings) -> Result<Self, Box<helium_crypto::Error>> {
+    pub fn from_settings(settings: &Settings) -> Result<Self, SubDaoClientBuilderError> {
         let channel = Endpoint::from(settings.url.clone())
+            .tls_config(ClientTlsConfig::new().with_enabled_roots())?
             .connect_timeout(Duration::from_secs(settings.connect_timeout))
             .timeout(Duration::from_secs(settings.rpc_timeout))
             .connect_lazy();
