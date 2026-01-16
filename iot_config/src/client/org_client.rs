@@ -9,6 +9,7 @@ use helium_proto::services::iot_config::{
     OrgDisableReqV1, OrgEnableReqV1, OrgGetReqV1, OrgListReqV1, OrgResV1, OrgV1,
 };
 use helium_proto_crypto::MsgSign;
+use tonic::transport::ClientTlsConfig;
 
 #[async_trait]
 pub trait Orgs: Send + Sync + 'static {
@@ -25,9 +26,18 @@ pub struct OrgClient {
     config_pubkey: PublicKey,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum OrgClientBuilderError {
+    #[error("tonic channel err: {0}")]
+    Client(#[from] tonic::transport::Error),
+    #[error("helium crypto err: {0}")]
+    Crypto(#[from] helium_crypto::Error),
+}
+
 impl OrgClient {
-    pub fn from_settings(settings: &Settings) -> Result<Self, Box<helium_crypto::Error>> {
+    pub fn from_settings(settings: &Settings) -> Result<Self, OrgClientBuilderError> {
         let channel = Endpoint::from(settings.url.clone())
+            .tls_config(ClientTlsConfig::new())?
             .connect_timeout(Duration::from_secs(settings.connect_timeout))
             .timeout(Duration::from_secs(settings.rpc_timeout))
             .connect_lazy();
