@@ -202,8 +202,7 @@ impl Server {
             .create()
             .await?;
 
-        let packet_loader = packet_loader::PacketLoader::from_settings(
-            settings,
+        let packet_loader = packet_loader::PacketLoader::new(
             pool.clone(),
             gateway_cache.clone(),
             pk_loader_receiver,

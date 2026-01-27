@@ -5,7 +5,6 @@
 //
 use crate::{
     gateway_cache::GatewayCache, reward_share::GatewayDCShare, telemetry::LoaderMetricTracker,
-    Settings,
 };
 use chrono::Utc;
 use file_store::{file_info_poller::FileInfoStream, file_sink};
@@ -19,7 +18,6 @@ use tokio::sync::mpsc::Receiver;
 
 pub struct PacketLoader {
     pub pool: PgPool,
-    pub cache: String,
     gateway_cache: GatewayCache,
     file_receiver: Receiver<FileInfoStream<IotValidPacket>>,
     file_sink: file_sink::FileSinkClient<NonRewardablePacket>,
@@ -40,18 +38,14 @@ impl ManagedTask for PacketLoader {
 }
 
 impl PacketLoader {
-    pub fn from_settings(
-        settings: &Settings,
+    pub fn new(
         pool: PgPool,
         gateway_cache: GatewayCache,
         file_receiver: Receiver<FileInfoStream<IotValidPacket>>,
         file_sink: file_sink::FileSinkClient<NonRewardablePacket>,
     ) -> Self {
-        tracing::info!("from_settings packet loader");
-        let cache = settings.cache.clone();
         Self {
             pool,
-            cache,
             gateway_cache,
             file_receiver,
             file_sink,
