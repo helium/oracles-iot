@@ -34,9 +34,7 @@ fn default_batch_size() -> u32 {
 }
 
 impl Settings {
-    pub fn signing_keypair(
-        &self,
-    ) -> Result<Arc<helium_crypto::Keypair>, Box<helium_crypto::Error>> {
+    pub fn signing_keypair(&self) -> Result<Arc<helium_crypto::Keypair>, helium_crypto::Error> {
         let data = std::fs::read(&self.signing_keypair).map_err(helium_crypto::Error::from)?;
         Ok(Arc::new(helium_crypto::Keypair::try_from(&data[..])?))
     }
