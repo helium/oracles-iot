@@ -2,14 +2,25 @@ use anyhow::bail;
 use config::{Config, Environment, File};
 use humantime_serde::re::humantime;
 use serde::Deserialize;
-use std::{path::Path, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct Buckets {
-    pub ingest: String,
-    pub packet_ingest: String,
-    pub entropy: String,
-    pub output: String,
+pub struct FileStoreClients {
+    pub cache: PathBuf,
+    /// Where does verifier write all it's output
+    pub output: file_store::BucketSettings,
+
+    /// iot-ingest bucket
+    pub ingest_input: file_store::BucketSettings,
+
+    /// entropy bucket
+    pub entropy_input: file_store::BucketSettings,
+
+    /// HPR packet report bucket
+    pub packet_input: file_store::BucketSettings,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -22,6 +33,8 @@ pub struct Settings {
     pub custom_tracing: custom_tracing::Settings,
     /// Cache location for generated verified reports
     pub cache: String,
+
+    pub file_store_clients: FileStoreClients,
 
     /// the base_stale period
     /// this is used to determine the minimum period for
@@ -58,9 +71,7 @@ pub struct Settings {
 
     pub database: db_store::Settings,
     pub iot_config_client: iot_config::client::Settings,
-    #[serde(default)]
-    pub file_store: file_store::Settings,
-    pub buckets: Buckets,
+
     pub metrics: poc_metrics::Settings,
     pub denylist: denylist::Settings,
     pub price_tracker: price_tracker::Settings,

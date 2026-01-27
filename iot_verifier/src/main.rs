@@ -75,13 +75,12 @@ impl Server {
 
         telemetry::initialize(&pool).await?;
 
-        let file_store_client = settings.file_store.connect().await;
-        let (file_upload, file_upload_server) = file_upload::FileUpload::new(
-            file_store_client.clone(),
-            settings.buckets.output.clone(),
+        let (file_upload, file_upload_server) = file_upload::FileUpload::from_bucket_client(
+            settings.file_store_clients.output.connect().await,
         )
         .await;
-        let store_base_path = path::Path::new(&settings.cache);
+
+        let store_base_path = &settings.file_store_clients.cache;
 
         let iot_config_client = IotConfigClient::from_settings(&settings.iot_config_client)?;
         let sub_dao_rewards_client = SubDaoClient::from_settings(&settings.iot_config_client)?;
@@ -109,7 +108,7 @@ impl Server {
         let loader = loader::Loader::from_settings(
             settings,
             pool.clone(),
-            file_store_client.clone(),
+            settings.file_store_clients.ingest_input.connect().await,
             gateway_cache.clone(),
         )
         .await?;
@@ -165,7 +164,7 @@ impl Server {
         let entropy_interval = settings.entropy_interval;
         let (entropy_loader_receiver, entropy_loader_server) = file_source::continuous_source()
             .state(pool.clone())
-            .file_store(file_store_client.clone(), settings.buckets.entropy.clone())
+            .bucket_client(settings.file_store_clients.entropy_input.connect().await)
             .prefix(FileType::EntropyReport.to_string())
             .lookback_max(max_lookback_age)
             .poll_duration(entropy_interval)
@@ -195,10 +194,7 @@ impl Server {
         let packet_interval = settings.packet_interval;
         let (pk_loader_receiver, pk_loader_server) = file_source::continuous_source()
             .state(pool.clone())
-            .file_store(
-                file_store_client.clone(),
-                settings.buckets.packet_ingest.clone(),
-            )
+            .bucket_client(settings.file_store_clients.packet_input.connect().await)
             .prefix(FileType::IotValidPacket.to_string())
             .lookback_max(max_lookback_age)
             .poll_duration(packet_interval)
