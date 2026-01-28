@@ -1,15 +1,17 @@
 use anyhow::bail;
 use config::{Config, Environment, File};
 use humantime_serde::re::humantime;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct FileStoreClients {
+    /// Cache location for generated verified reports
     pub cache: PathBuf,
+
     /// Where does verifier write all it's output
     pub output: file_store::BucketSettings,
 
@@ -31,8 +33,6 @@ pub struct Settings {
     pub log: String,
     #[serde(default)]
     pub custom_tracing: custom_tracing::Settings,
-    /// Cache location for generated verified reports
-    pub cache: String,
 
     pub file_store_clients: FileStoreClients,
 
@@ -72,7 +72,9 @@ pub struct Settings {
     pub database: db_store::Settings,
     pub iot_config_client: iot_config::client::Settings,
 
+    #[serde(default)]
     pub metrics: poc_metrics::Settings,
+
     pub denylist: denylist::Settings,
     pub price_tracker: price_tracker::Settings,
 
@@ -276,5 +278,50 @@ impl Settings {
         } else {
             Ok(self.beacon_interval)
         }
+    }
+
+    pub fn as_json_pretty(&self) -> String {
+        fn format_duration(d: Duration) -> String {
+            humantime::format_duration(d).to_string()
+        }
+
+        serde_json::to_string_pretty(&serde_json::json!({
+            "log": self.log,
+            "custom_tracing": self.custom_tracing,
+            "file_store_clients": self.file_store_clients,
+            "database": self.database,
+            "iot_config_client": {
+                "url": self.iot_config_client.url.to_string(),
+                "signing_keypair_file": self.iot_config_client.signing_keypair,
+                "config_pubkey": self.iot_config_client.config_pubkey
+            },
+            "metrics": self.metrics,
+            "denylist": {
+                "url": self.denylist.denylist_url,
+                "trigger_interval": self.denylist.trigger_interval
+            },
+            "price_tracker": self.price_tracker,
+            "rewarding": {
+                "period": format_duration(self.reward_period),
+                "offset": format_duration(self.reward_period_offset)
+            },
+            "base_stale_period": format_duration(self.base_stale_period),
+            "beacon_stale_period": format_duration(self.beacon_stale_period),
+            "witness_stale_period": format_duration(self.witness_stale_period),
+            "entropy_stale_period": format_duration(self.entropy_stale_period),
+            "max_witness_per_poc": self.max_witnesses_per_poc,
+            "beacon_interval": format_duration(self.beacon_interval),
+            "ingestor_rollup_time": format_duration(self.ingestor_rollup_time),
+            "poc_loader_window_width": format_duration(self.poc_loader_window_width),
+            "poc_loader_poll_time": format_duration(self.poc_loader_poll_time),
+            "loader_window_max_lookback_age": format_duration(self.loader_window_max_lookback_age),
+            "entropy_interval": format_duration(self.entropy_interval),
+            "packet_interval": format_duration(self.packet_interval),
+            "beacon_max_retries": self.beacon_max_retries,
+            "witness_max_retries": self.witness_max_retries,
+            "gateway_refresh_interval": format_duration(self.gateway_refresh_interval),
+            "region_params_refresh_interval": format_duration(self.region_params_refresh_interval)
+        }))
+        .expect("printing settings")
     }
 }

@@ -68,6 +68,7 @@ impl Server {
 
         // Install the prometheus metrics exporter
         poc_metrics::start_metrics(&settings.metrics)?;
+        tracing::info!("Settings: {}", settings.as_json_pretty());
 
         // Create database pool and run migrations
         let pool = settings.database.connect(env!("CARGO_PKG_NAME")).await?;
