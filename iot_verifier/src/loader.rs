@@ -74,8 +74,7 @@ use xorf::{Filter as XorFilter, Xor16};
 const REPORTS_META_NAME: &str = "report";
 
 pub struct Loader {
-    file_store_client: file_store::Client,
-    bucket: String,
+    ingest_client: file_store::BucketClient,
     pool: PgPool,
     poll_time: time::Duration,
     window_width: Duration,
@@ -107,14 +106,13 @@ impl Loader {
     pub async fn from_settings(
         settings: &Settings,
         pool: PgPool,
-        file_store_client: file_store::Client,
+        ingest_client: file_store::BucketClient,
         gateway_cache: GatewayCache,
     ) -> Result<Self, NewLoaderError> {
         tracing::info!("from_settings verifier loader");
         Ok(Self {
             pool,
-            file_store_client,
-            bucket: settings.buckets.ingest.clone(),
+            ingest_client,
             poll_time: settings.poc_loader_poll_time,
             window_width: settings.poc_loader_window_width,
             ingestor_rollup_time: settings.ingestor_rollup_time,
@@ -276,14 +274,10 @@ impl Loader {
         tracing::info!(
             "checking for new ingest files of type {file_type} after {after} and before {before}"
         );
-        let infos = file_store::list_all_files(
-            &self.file_store_client,
-            &self.bucket,
-            file_type.to_str(),
-            after,
-            before,
-        )
-        .await?;
+        let infos = self
+            .ingest_client
+            .list_all_files(file_type.to_str(), after, before)
+            .await?;
         if infos.is_empty() {
             tracing::info!("no available ingest files of type {file_type}");
             return Ok(());
@@ -322,7 +316,8 @@ impl Loader {
         let file_type = file_info.prefix.clone();
         let tx = Mutex::new(self.pool.begin().await?);
         let metrics = LoaderMetricTracker::new();
-        file_store::stream_single_file(&self.file_store_client, &self.bucket, file_info.clone())
+
+        self.ingest_client.stream_single_file(file_info.clone())
             .await?
             .chunks(600)
             .for_each_concurrent(10, |msgs| async {
