@@ -129,10 +129,10 @@ aws-smithy-types-convert = { version = "0.60.9", features = [
 url = "2.5.4"
 
 ### Protobuf
-helium-proto = { git = "https://github.com/helium/proto", branch = "master", features = [
+helium-proto = { git = "https://github.com/helium/proto", branch = "macpie/multibuy2.0", features = [
   "services",
 ] }
-beacon = { git = "https://github.com/helium/proto", branch = "master" }
+beacon = { git = "https://github.com/helium/proto", branch = "macpie/multibuy2.0" }
 helium-proto-crypto = { git = "https://github.com/helium/helium-wallet-rs", branch = "master" }
 # Pickup versions from above
 prost = "*"
@@ -174,3 +174,9 @@ anchor-lang = { git = "https://github.com/madninja/anchor.git", branch = "madnin
 
 # [patch.'https://github.com/helium/proto']
 # helium-proto = { git = "https://www.github.com/helium/proto.git", branch = "dcyoung/radio-usage-stats-req-v2" }
+
+[patch.'https://github.com/helium/proto']
+helium-proto = { git = "https://www.github.com/helium/proto.git", branch = "macpie/multibuy2.0", features = ["services"] }
+beacon = { git = "https://www.github.com/helium/proto.git", branch = "macpie/multibuy2.0" }
+msg-signature = { git = "https://www.github.com/helium/proto.git", branch = "macpie/multibuy2.0" }
+msg-signature-macro = { git = "https://www.github.com/helium/proto.git", branch = "macpie/multibuy2.0" }
