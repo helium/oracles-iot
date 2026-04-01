@@ -1,4 +1,4 @@
-name: Docker CI
+name: CI
 
 on:
   pull_request:
@@ -19,18 +19,20 @@ jobs:
       image_tag: ${{ steps.out.outputs.tag }}
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Create Tag
         id: out
         run: echo "tag=${{ hashFiles('Dockerfile','rust-toolchain.toml') }}" >> "$GITHUB_OUTPUT"
   build-base:
     needs: compute-base-build-tag
     runs-on: ubuntu-latest
+    env:
+      CACHE_HIT: false
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -44,10 +46,10 @@ jobs:
           fi
       - name: Set up Docker Buildx
         if: env.CACHE_HIT == 'false'
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
       - name: Build and Push Base Image (if not cached)
         if: env.CACHE_HIT == 'false'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7
         with:
           context: .
           file: Dockerfile
@@ -65,7 +67,7 @@ jobs:
       cancel-in-progress: true
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Check formatting
         run: cargo fmt -- --check
   clippy:
@@ -79,9 +81,9 @@ jobs:
       cancel-in-progress: true
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Cache Cargo Target Directory
-        uses: actions/cache@v4
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
         with:
           path: target
           key: clippy-base-${{ needs.compute-base-build-tag.outputs.image_tag }}-${{ hashFiles('**/Cargo.lock') }}
@@ -95,10 +97,10 @@ jobs:
       matrix: ${{ steps.get-matrix.outputs.matrix }}
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Restore Cached Matrix
         id: cache-matrix
-        uses: actions/cache@v4
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
         with:
           path: matrix.json
           key: matrix-${{ hashFiles('Cargo.toml', 'Cargo.lock') }}
@@ -135,20 +137,21 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
-      localstack:
-        image: localstack/localstack:latest
-        env:
-          SERVICES: s3
-          EAGER_SERVICE_LOADING: 1
+      rustfs:
+        image: rustfs/rustfs:1.0.0-alpha.90
         ports:
-          - 4566:4566
+          - 9000:9000
+        env:
+          RUSTFS_CONSOLE_ENABLE: false
+          RUSTFS_ACCESS_KEY: admin
+          RUSTFS_SECRET_KEY: admin
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Cache Cargo Target Directory
         # Anything above 4min run
         if: contains('["ingest", "iot-config", "iot-packet-verifier", "iot-verifier", "price"]', matrix.package)
-        uses: actions/cache@v4
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
         with:
           path: target
           key: tests-${{ matrix.package }}-base-${{ needs.compute-base-build-tag.outputs.image_tag }}-${{ hashFiles('**/Cargo.lock') }}
@@ -157,7 +160,7 @@ jobs:
       - name: Run tests
         env:
           DATABASE_URL: postgres://postgres:postgres@postgres:5432/postgres
-          AWSLOCAL_ENDPOINT: "http://localstack:4566"
+          AWSLOCAL_ENDPOINT: "http://rustfs:9000"
         run: cargo test -p ${{ matrix.package }}
   upload-iot-releases:
     needs: [fmt, clippy, tests]
@@ -182,15 +185,15 @@ jobs:
           dpkg-reconfigure -f noninteractive tzdata
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Rust install
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1
         with:
           cache-shared-key: release
 
       - name: Install Protoc
-        uses: arduino/setup-protoc@v3
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
