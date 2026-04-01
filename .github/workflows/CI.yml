@@ -160,7 +160,7 @@ jobs:
       - name: Run tests
         env:
           DATABASE_URL: postgres://postgres:postgres@postgres:5432/postgres
-          AWSLOCAL_ENDPOINT: "http://rustfs:9000"
+          AWSLOCAL_ENDPOINT: http://rustfs:9000
         run: cargo test -p ${{ matrix.package }}
   upload-iot-releases:
     needs: [fmt, clippy, tests]
