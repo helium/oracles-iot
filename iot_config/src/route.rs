@@ -18,6 +18,7 @@ use std::{collections::BTreeMap, sync::Arc};
 use tokio::sync::broadcast::Sender;
 
 pub mod proto {
+    pub use helium_proto::services::iot_config::multibuy_v1::Protocol as MultibuyProtocol;
     pub use helium_proto::{
         services::iot_config::{
             protocol_http_roaming_v1::FlowTypeV1, route_stream_res_v1, server_v1::Protocol,
@@ -30,6 +31,7 @@ pub mod proto {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Multibuy {
+    pub protocol: i32,
     pub host: String,
     pub port: u32,
     pub fail_on_unavailable: bool,
@@ -38,6 +40,7 @@ pub struct Multibuy {
 impl From<proto::MultibuyV1> for Multibuy {
     fn from(mb: proto::MultibuyV1) -> Self {
         Self {
+            protocol: mb.protocol,
             host: mb.host,
             port: mb.port,
             fail_on_unavailable: mb.fail_on_unavailable,
@@ -48,6 +51,7 @@ impl From<proto::MultibuyV1> for Multibuy {
 impl From<Multibuy> for proto::MultibuyV1 {
     fn from(mb: Multibuy) -> Self {
         Self {
+            protocol: mb.protocol,
             host: mb.host,
             port: mb.port,
             fail_on_unavailable: mb.fail_on_unavailable,

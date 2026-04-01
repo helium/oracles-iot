@@ -342,6 +342,7 @@ async fn create_route_with_multibuy_roundtrips(pool: Pool<Postgres>) {
     let org = create_org(socket_addr, &admin_keypair).await;
 
     let multibuy = proto::MultibuyV1 {
+        protocol: proto::multibuy_v1::Protocol::Https as i32,
         host: "mb.example.com".to_string(),
         port: 9090,
         fail_on_unavailable: true,
@@ -387,6 +388,7 @@ async fn update_route_multibuy(pool: Pool<Postgres>) {
 
     // Update to add multibuy
     let multibuy = proto::MultibuyV1 {
+        protocol: proto::multibuy_v1::Protocol::Http as i32,
         host: "mb.example.com".to_string(),
         port: 9090,
         fail_on_unavailable: false,
@@ -431,6 +433,7 @@ async fn stream_includes_multibuy(pool: Pool<Postgres>) {
     let org = create_org(socket_addr, &admin_keypair).await;
 
     let multibuy = proto::MultibuyV1 {
+        protocol: proto::multibuy_v1::Protocol::Https as i32,
         host: "mb.example.com".to_string(),
         port: 9090,
         fail_on_unavailable: true,
