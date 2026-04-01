@@ -157,13 +157,11 @@ jobs:
           key: tests-${{ matrix.package }}-base-${{ needs.compute-base-build-tag.outputs.image_tag }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             tests-${{ matrix.package }}-base-${{ needs.compute-base-build-tag.outputs.image_tag }}-
-      - name: Install nextest
-        run: curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
       - name: Run tests
         env:
           DATABASE_URL: postgres://postgres:postgres@postgres:5432/postgres
           AWSLOCAL_ENDPOINT: "http://rustfs:9000"
-        run: cargo nextest run -p ${{ matrix.package }} --no-tests=pass
+        run: cargo test -p ${{ matrix.package }}
   upload-iot-releases:
     needs: [fmt, clippy, tests]
     runs-on: ubuntu-latest
