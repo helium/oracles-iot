@@ -1,1 +1,1 @@
-alter table routes add column multibuy jsonb;
+alter table routes add column multi_buy jsonb;

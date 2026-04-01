@@ -322,7 +322,7 @@ async fn stream_updates_with_deactivate_reactivate(pool: Pool<Postgres>) {
 }
 
 #[sqlx::test]
-async fn create_route_with_multibuy_roundtrips(pool: Pool<Postgres>) {
+async fn create_route_with_multi_buy_roundtrips(pool: Pool<Postgres>) {
     let signing_keypair = Arc::new(generate_keypair());
     let admin_keypair = generate_keypair();
     let client_keypair = generate_keypair();
@@ -341,29 +341,29 @@ async fn create_route_with_multibuy_roundtrips(pool: Pool<Postgres>) {
 
     let org = create_org(socket_addr, &admin_keypair).await;
 
-    let multibuy = proto::MultibuyV1 {
-        protocol: proto::multibuy_v1::Protocol::Https as i32,
+    let multi_buy = proto::MultiBuyV1 {
+        protocol: proto::multi_buy_v1::Protocol::Https as i32,
         host: "mb.example.com".to_string(),
         port: 9090,
         fail_on_unavailable: true,
     };
 
-    let route = create_route_with_multibuy(
+    let route = create_route_with_multi_buy(
         &mut client,
         &org.org.unwrap(),
         &admin_keypair,
-        Some(multibuy.clone()),
+        Some(multi_buy.clone()),
     )
     .await;
 
-    assert_eq!(route.multibuy, Some(multibuy.clone()));
+    assert_eq!(route.multi_buy, Some(multi_buy.clone()));
 
     let fetched = get_route(&mut client, &route.id, &admin_keypair).await;
-    assert_eq!(fetched.multibuy, Some(multibuy));
+    assert_eq!(fetched.multi_buy, Some(multi_buy));
 }
 
 #[sqlx::test]
-async fn update_route_multibuy(pool: Pool<Postgres>) {
+async fn update_route_multi_buy(pool: Pool<Postgres>) {
     let signing_keypair = Arc::new(generate_keypair());
     let admin_keypair = generate_keypair();
     let client_keypair = generate_keypair();
@@ -383,37 +383,37 @@ async fn update_route_multibuy(pool: Pool<Postgres>) {
     let org = create_org(socket_addr, &admin_keypair).await;
     let route = create_route(&mut client, &org.org.unwrap(), &admin_keypair).await;
 
-    // Route starts without multibuy
-    assert_eq!(route.multibuy, None);
+    // Route starts without multi_buy
+    assert_eq!(route.multi_buy, None);
 
-    // Update to add multibuy
-    let multibuy = proto::MultibuyV1 {
-        protocol: proto::multibuy_v1::Protocol::Http as i32,
+    // Update to add multi_buy
+    let multi_buy = proto::MultiBuyV1 {
+        protocol: proto::multi_buy_v1::Protocol::Http as i32,
         host: "mb.example.com".to_string(),
         port: 9090,
         fail_on_unavailable: false,
     };
     let mut updated = route.clone();
-    updated.multibuy = Some(multibuy.clone());
+    updated.multi_buy = Some(multi_buy.clone());
     let updated = update_route(&mut client, updated, &admin_keypair).await;
-    assert_eq!(updated.multibuy, Some(multibuy));
+    assert_eq!(updated.multi_buy, Some(multi_buy));
 
     // Verify via GET
     let fetched = get_route(&mut client, &route.id, &admin_keypair).await;
-    assert_eq!(fetched.multibuy, updated.multibuy);
+    assert_eq!(fetched.multi_buy, updated.multi_buy);
 
-    // Update to remove multibuy
+    // Update to remove multi_buy
     let mut cleared = updated;
-    cleared.multibuy = None;
+    cleared.multi_buy = None;
     let cleared = update_route(&mut client, cleared, &admin_keypair).await;
-    assert_eq!(cleared.multibuy, None);
+    assert_eq!(cleared.multi_buy, None);
 
     let fetched = get_route(&mut client, &route.id, &admin_keypair).await;
-    assert_eq!(fetched.multibuy, None);
+    assert_eq!(fetched.multi_buy, None);
 }
 
 #[sqlx::test]
-async fn stream_includes_multibuy(pool: Pool<Postgres>) {
+async fn stream_includes_multi_buy(pool: Pool<Postgres>) {
     let signing_keypair = Arc::new(generate_keypair());
     let admin_keypair = generate_keypair();
     let client_keypair = generate_keypair();
@@ -432,18 +432,18 @@ async fn stream_includes_multibuy(pool: Pool<Postgres>) {
 
     let org = create_org(socket_addr, &admin_keypair).await;
 
-    let multibuy = proto::MultibuyV1 {
-        protocol: proto::multibuy_v1::Protocol::Https as i32,
+    let multi_buy = proto::MultiBuyV1 {
+        protocol: proto::multi_buy_v1::Protocol::Https as i32,
         host: "mb.example.com".to_string(),
         port: 9090,
         fail_on_unavailable: true,
     };
 
-    let route = create_route_with_multibuy(
+    let route = create_route_with_multi_buy(
         &mut client,
         &org.org.unwrap(),
         &admin_keypair,
-        Some(multibuy.clone()),
+        Some(multi_buy.clone()),
     )
     .await;
 
@@ -463,7 +463,7 @@ async fn stream_includes_multibuy(pool: Pool<Postgres>) {
     };
 
     assert_eq!(&streamed_route.id, &route.id);
-    assert_eq!(streamed_route.multibuy, Some(multibuy));
+    assert_eq!(streamed_route.multi_buy, Some(multi_buy));
 }
 
 async fn drain_stream(
@@ -733,7 +733,7 @@ async fn create_route(
             active: true,
             locked: false,
             ignore_empty_skf: true,
-            multibuy: None,
+            multi_buy: None,
         }),
         timestamp: Utc::now().timestamp() as u64,
         signature: vec![],
@@ -756,11 +756,11 @@ async fn create_route(
     route
 }
 
-async fn create_route_with_multibuy(
+async fn create_route_with_multi_buy(
     client: &mut RouteClient<Channel>,
     org: &proto::OrgV1,
     signing_keypair: &Keypair,
-    multibuy: Option<proto::MultibuyV1>,
+    multi_buy: Option<proto::MultiBuyV1>,
 ) -> proto::RouteV1 {
     let mut request = proto::RouteCreateReqV1 {
         oui: org.oui,
@@ -779,7 +779,7 @@ async fn create_route_with_multibuy(
             active: true,
             locked: false,
             ignore_empty_skf: true,
-            multibuy,
+            multi_buy,
         }),
         timestamp: Utc::now().timestamp() as u64,
         signature: vec![],
