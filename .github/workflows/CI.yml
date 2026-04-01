@@ -163,7 +163,7 @@ jobs:
         env:
           DATABASE_URL: postgres://postgres:postgres@postgres:5432/postgres
           AWSLOCAL_ENDPOINT: "http://rustfs:9000"
-        run: cargo nextest run -p ${{ matrix.package }}
+        run: cargo nextest run -p ${{ matrix.package }} --no-tests=pass
   upload-iot-releases:
     needs: [fmt, clippy, tests]
     runs-on: ubuntu-latest
