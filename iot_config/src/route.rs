@@ -18,14 +18,45 @@ use std::{collections::BTreeMap, sync::Arc};
 use tokio::sync::broadcast::Sender;
 
 pub mod proto {
+    pub use helium_proto::services::iot_config::multi_buy_v1::Protocol as MultibuyProtocol;
     pub use helium_proto::{
         services::iot_config::{
             protocol_http_roaming_v1::FlowTypeV1, route_stream_res_v1, server_v1::Protocol,
-            ActionV1, ProtocolGwmpMappingV1, ProtocolGwmpV1, ProtocolHttpRoamingV1,
+            ActionV1, MultiBuyV1, ProtocolGwmpMappingV1, ProtocolGwmpV1, ProtocolHttpRoamingV1,
             ProtocolPacketRouterV1, RouteStreamResV1, RouteV1, ServerV1,
         },
         Message, Region,
     };
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Multibuy {
+    pub protocol: i32,
+    pub host: String,
+    pub port: u32,
+    pub fail_on_unavailable: bool,
+}
+
+impl From<proto::MultiBuyV1> for Multibuy {
+    fn from(mb: proto::MultiBuyV1) -> Self {
+        Self {
+            protocol: mb.protocol,
+            host: mb.host,
+            port: mb.port,
+            fail_on_unavailable: mb.fail_on_unavailable,
+        }
+    }
+}
+
+impl From<Multibuy> for proto::MultiBuyV1 {
+    fn from(mb: Multibuy) -> Self {
+        Self {
+            protocol: mb.protocol,
+            host: mb.host,
+            port: mb.port,
+            fail_on_unavailable: mb.fail_on_unavailable,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -38,6 +69,7 @@ pub struct Route {
     pub active: bool,
     pub locked: bool,
     pub ignore_empty_skf: bool,
+    pub multi_buy: Option<Multibuy>,
 }
 
 impl Route {
@@ -51,6 +83,7 @@ impl Route {
             active: true,
             locked: false,
             ignore_empty_skf: false,
+            multi_buy: None,
         }
     }
 
@@ -83,6 +116,7 @@ pub struct StorageRoute {
     pub active: bool,
     pub locked: bool,
     pub ignore_empty_skf: bool,
+    pub multi_buy: Option<serde_json::Value>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -115,8 +149,8 @@ pub async fn create_route(
 
     let row = sqlx::query(
             r#"
-            insert into routes (oui, net_id, max_copies, server_host, server_port, server_protocol_opts, active, ignore_empty_skf)
-            values ($1, $2, $3, $4, $5, $6, $7, $8)
+            insert into routes (oui, net_id, max_copies, server_host, server_port, server_protocol_opts, active, ignore_empty_skf, multi_buy)
+            values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             returning id
             "#,
         )
@@ -128,6 +162,7 @@ pub async fn create_route(
         .bind(json!(&protocol_opts))
         .bind(route.active)
         .bind(route.ignore_empty_skf)
+        .bind(route.multi_buy.as_ref().map(|mb| json!(mb)))
         .fetch_one(&mut *transaction)
         .await?;
 
@@ -185,7 +220,7 @@ pub async fn update_route(
     sqlx::query(
         r#"
         update routes
-        set max_copies = $2, server_host = $3, server_port = $4, server_protocol_opts = $5, active = $6, ignore_empty_skf = $7
+        set max_copies = $2, server_host = $3, server_port = $4, server_protocol_opts = $5, active = $6, ignore_empty_skf = $7, multi_buy = $8
         where id = $1
         "#,
     )
@@ -196,6 +231,7 @@ pub async fn update_route(
     .bind(json!(&protocol_opts))
     .bind(route.active)
     .bind(route.ignore_empty_skf)
+    .bind(route.multi_buy.as_ref().map(|mb| json!(mb)))
     .execute(&mut *transaction)
     .await?;
 
@@ -462,7 +498,7 @@ pub async fn update_devaddr_ranges(
 pub async fn list_routes(oui: u64, db: impl sqlx::PgExecutor<'_>) -> anyhow::Result<Vec<Route>> {
     Ok(sqlx::query_as::<_, StorageRoute>(
         r#"
-        select r.id, r.oui, r.net_id, r.max_copies, r.server_host, r.server_port, r.server_protocol_opts, r.active, r.ignore_empty_skf, o.locked
+        select r.id, r.oui, r.net_id, r.max_copies, r.server_host, r.server_port, r.server_protocol_opts, r.active, r.ignore_empty_skf, r.multi_buy, o.locked
             from routes r
             join organizations o on r.oui = o.oui
             where o.oui = $1 and r.deleted = false
@@ -481,6 +517,7 @@ pub async fn list_routes(oui: u64, db: impl sqlx::PgExecutor<'_>) -> anyhow::Res
             active: route.active,
             locked: route.locked,
             ignore_empty_skf: route.ignore_empty_skf,
+            multi_buy: route.multi_buy.and_then(|v| serde_json::from_value(v).ok()),
         })})
     .filter_map(|route| async move { route.ok() })
     .collect::<Vec<Route>>()
@@ -527,7 +564,7 @@ pub fn route_stream<'a>(
 ) -> impl Stream<Item = (Route, bool)> + 'a {
     sqlx::query(
         r#"
-        select r.id, r.oui, r.net_id, r.max_copies, r.server_host, r.server_port, r.server_protocol_opts, r.active, r.ignore_empty_skf, o.locked, r.deleted
+        select r.id, r.oui, r.net_id, r.max_copies, r.server_host, r.server_port, r.server_protocol_opts, r.active, r.ignore_empty_skf, r.multi_buy, o.locked, r.deleted
             from routes r
             join organizations o on r.oui = o.oui
             where r.updated_at >= $1
@@ -547,6 +584,7 @@ pub fn route_stream<'a>(
             active: route.active,
             locked: route.locked,
             ignore_empty_skf: route.ignore_empty_skf,
+            multi_buy: route.multi_buy.and_then(|v| serde_json::from_value(v).ok()),
         }, deleted))})
     .filter_map(|result| async move { result.ok() })
     .boxed()
@@ -615,7 +653,7 @@ pub async fn get_route(id: &str, db: impl sqlx::PgExecutor<'_>) -> anyhow::Resul
     let uuid = Uuid::try_parse(id)?;
     let route = sqlx::query_as::<_, StorageRoute>(
         r#"
-        select r.id, r.oui, r.net_id, r.max_copies, r.server_host, r.server_port, r.server_protocol_opts, r.active, r.ignore_empty_skf, o.locked
+        select r.id, r.oui, r.net_id, r.max_copies, r.server_host, r.server_port, r.server_protocol_opts, r.active, r.ignore_empty_skf, r.multi_buy, o.locked
             from routes r
             join organizations o on r.oui = o.oui
             where r.id = $1 and r.deleted = false
@@ -641,6 +679,7 @@ pub async fn get_route(id: &str, db: impl sqlx::PgExecutor<'_>) -> anyhow::Resul
         active: route.active,
         locked: route.locked,
         ignore_empty_skf: route.ignore_empty_skf,
+        multi_buy: route.multi_buy.and_then(|v| serde_json::from_value(v).ok()),
     })
 }
 
@@ -861,6 +900,7 @@ impl From<proto::RouteV1> for Route {
             active: route.active,
             locked: route.locked,
             ignore_empty_skf: route.ignore_empty_skf,
+            multi_buy: route.multi_buy.map(Into::into),
         }
     }
 }
@@ -876,6 +916,7 @@ impl From<Route> for proto::RouteV1 {
             active: route.active,
             locked: route.locked,
             ignore_empty_skf: route.ignore_empty_skf,
+            multi_buy: route.multi_buy.map(Into::into),
         }
     }
 }

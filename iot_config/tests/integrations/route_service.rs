@@ -9,7 +9,7 @@ use futures::{Future, StreamExt, TryFutureExt};
 use helium_crypto::{KeyTag, Keypair, PublicKey, Sign};
 use helium_proto::services::iot_config::{
     self as proto, config_org_client::OrgClient, config_route_client::RouteClient, RouteGetReqV1,
-    RouteListReqV1, RouteStreamReqV1,
+    RouteListReqV1, RouteStreamReqV1, RouteUpdateReqV1,
 };
 use iot_config::{
     admin::{AuthCache, KeyType},
@@ -321,6 +321,151 @@ async fn stream_updates_with_deactivate_reactivate(pool: Pool<Postgres>) {
     assert_route_result(&responses, proto::ActionV1::Add, &route.id);
 }
 
+#[sqlx::test]
+async fn create_route_with_multi_buy_roundtrips(pool: Pool<Postgres>) {
+    let signing_keypair = Arc::new(generate_keypair());
+    let admin_keypair = generate_keypair();
+    let client_keypair = generate_keypair();
+
+    let socket_addr = get_socket_addr().expect("socket addr");
+
+    let auth_cache = create_auth_cache(
+        admin_keypair.public_key().clone(),
+        client_keypair.public_key().clone(),
+        &pool,
+    )
+    .await;
+
+    let _handle = start_server(socket_addr, signing_keypair, auth_cache, pool.clone()).await;
+    let mut client = connect_client(socket_addr).await;
+
+    let org = create_org(socket_addr, &admin_keypair).await;
+
+    let multi_buy = proto::MultiBuyV1 {
+        protocol: proto::multi_buy_v1::Protocol::Https as i32,
+        host: "mb.example.com".to_string(),
+        port: 9090,
+        fail_on_unavailable: true,
+    };
+
+    let route = create_route_with_multi_buy(
+        &mut client,
+        &org.org.unwrap(),
+        &admin_keypair,
+        Some(multi_buy.clone()),
+    )
+    .await;
+
+    assert_eq!(route.multi_buy, Some(multi_buy.clone()));
+
+    let fetched = get_route(&mut client, &route.id, &admin_keypair).await;
+    assert_eq!(fetched.multi_buy, Some(multi_buy));
+}
+
+#[sqlx::test]
+async fn update_route_multi_buy(pool: Pool<Postgres>) {
+    let signing_keypair = Arc::new(generate_keypair());
+    let admin_keypair = generate_keypair();
+    let client_keypair = generate_keypair();
+
+    let socket_addr = get_socket_addr().expect("socket addr");
+
+    let auth_cache = create_auth_cache(
+        admin_keypair.public_key().clone(),
+        client_keypair.public_key().clone(),
+        &pool,
+    )
+    .await;
+
+    let _handle = start_server(socket_addr, signing_keypair, auth_cache, pool.clone()).await;
+    let mut client = connect_client(socket_addr).await;
+
+    let org = create_org(socket_addr, &admin_keypair).await;
+    let route = create_route(&mut client, &org.org.unwrap(), &admin_keypair).await;
+
+    // Route starts without multi_buy
+    assert_eq!(route.multi_buy, None);
+
+    // Update to add multi_buy
+    let multi_buy = proto::MultiBuyV1 {
+        protocol: proto::multi_buy_v1::Protocol::Http as i32,
+        host: "mb.example.com".to_string(),
+        port: 9090,
+        fail_on_unavailable: false,
+    };
+    let mut updated = route.clone();
+    updated.multi_buy = Some(multi_buy.clone());
+    let updated = update_route(&mut client, updated, &admin_keypair).await;
+    assert_eq!(updated.multi_buy, Some(multi_buy));
+
+    // Verify via GET
+    let fetched = get_route(&mut client, &route.id, &admin_keypair).await;
+    assert_eq!(fetched.multi_buy, updated.multi_buy);
+
+    // Update to remove multi_buy
+    let mut cleared = updated;
+    cleared.multi_buy = None;
+    let cleared = update_route(&mut client, cleared, &admin_keypair).await;
+    assert_eq!(cleared.multi_buy, None);
+
+    let fetched = get_route(&mut client, &route.id, &admin_keypair).await;
+    assert_eq!(fetched.multi_buy, None);
+}
+
+#[sqlx::test]
+async fn stream_includes_multi_buy(pool: Pool<Postgres>) {
+    let signing_keypair = Arc::new(generate_keypair());
+    let admin_keypair = generate_keypair();
+    let client_keypair = generate_keypair();
+
+    let socket_addr = get_socket_addr().expect("socket addr");
+
+    let auth_cache = create_auth_cache(
+        admin_keypair.public_key().clone(),
+        client_keypair.public_key().clone(),
+        &pool,
+    )
+    .await;
+
+    let _handle = start_server(socket_addr, signing_keypair, auth_cache, pool.clone()).await;
+    let mut client = connect_client(socket_addr).await;
+
+    let org = create_org(socket_addr, &admin_keypair).await;
+
+    let multi_buy = proto::MultiBuyV1 {
+        protocol: proto::multi_buy_v1::Protocol::Https as i32,
+        host: "mb.example.com".to_string(),
+        port: 9090,
+        fail_on_unavailable: true,
+    };
+
+    let route = create_route_with_multi_buy(
+        &mut client,
+        &org.org.unwrap(),
+        &admin_keypair,
+        Some(multi_buy.clone()),
+    )
+    .await;
+
+    let response = client
+        .stream(route_stream_req_v1(&client_keypair, 0))
+        .await
+        .expect("stream request");
+    let mut response_stream = response.into_inner();
+
+    let msg = receive(response_stream.next()).await;
+    let Ok(proto::RouteStreamResV1 {
+        data: Some(proto::route_stream_res_v1::Data::Route(streamed_route)),
+        ..
+    }) = msg
+    else {
+        panic!("message not correct format")
+    };
+
+    assert_eq!(&streamed_route.id, &route.id);
+    assert_eq!(streamed_route.multi_buy, Some(multi_buy));
+}
+
 async fn drain_stream(
     stream: Streaming<proto::RouteStreamResV1>,
 ) -> Result<Vec<proto::RouteStreamResV1>, tonic::Status> {
@@ -588,6 +733,7 @@ async fn create_route(
             active: true,
             locked: false,
             ignore_empty_skf: true,
+            multi_buy: None,
         }),
         timestamp: Utc::now().timestamp() as u64,
         signature: vec![],
@@ -603,6 +749,103 @@ async fn create_route(
     let proto::RouteResV1 {
         route: Some(route), ..
     } = response.unwrap().into_inner()
+    else {
+        panic!("incorrect route response")
+    };
+
+    route
+}
+
+async fn create_route_with_multi_buy(
+    client: &mut RouteClient<Channel>,
+    org: &proto::OrgV1,
+    signing_keypair: &Keypair,
+    multi_buy: Option<proto::MultiBuyV1>,
+) -> proto::RouteV1 {
+    let mut request = proto::RouteCreateReqV1 {
+        oui: org.oui,
+        route: Some(proto::RouteV1 {
+            id: "".to_string(),
+            net_id: 11,
+            oui: org.oui,
+            server: Some(proto::ServerV1 {
+                host: "hostname".to_string(),
+                port: 8080,
+                protocol: Some(proto::server_v1::Protocol::PacketRouter(
+                    proto::ProtocolPacketRouterV1 {},
+                )),
+            }),
+            max_copies: 1,
+            active: true,
+            locked: false,
+            ignore_empty_skf: true,
+            multi_buy,
+        }),
+        timestamp: Utc::now().timestamp() as u64,
+        signature: vec![],
+        signer: signing_keypair.public_key().into(),
+    };
+
+    request.signature = signing_keypair
+        .sign(&request.encode_to_vec())
+        .expect("sign create route");
+
+    let response = client.create(request).await;
+
+    let proto::RouteResV1 {
+        route: Some(route), ..
+    } = response.unwrap().into_inner()
+    else {
+        panic!("incorrect route response")
+    };
+
+    route
+}
+
+async fn update_route(
+    client: &mut RouteClient<Channel>,
+    route: proto::RouteV1,
+    signing_keypair: &Keypair,
+) -> proto::RouteV1 {
+    let mut request = RouteUpdateReqV1 {
+        route: Some(route),
+        timestamp: Utc::now().timestamp() as u64,
+        signature: vec![],
+        signer: signing_keypair.public_key().into(),
+    };
+
+    request.signature = signing_keypair
+        .sign(&request.encode_to_vec())
+        .expect("sign update route");
+
+    let response = client.update(request).await;
+
+    let proto::RouteResV1 {
+        route: Some(route), ..
+    } = response.unwrap().into_inner()
+    else {
+        panic!("incorrect route response")
+    };
+
+    route
+}
+
+async fn get_route(
+    client: &mut RouteClient<Channel>,
+    route_id: &str,
+    signing_keypair: &Keypair,
+) -> proto::RouteV1 {
+    let mut get_request = RouteGetReqV1 {
+        id: route_id.to_string(),
+        timestamp: Utc::now().timestamp() as u64,
+        signer: signing_keypair.public_key().to_vec(),
+        signature: vec![],
+    };
+    get_request.signature = signing_keypair.sign(&get_request.encode_to_vec()).unwrap();
+
+    let proto::RouteResV1 {
+        route: Some(route), ..
+    } = client.get(get_request).await.unwrap().into_inner()
     else {
         panic!("incorrect route response")
     };

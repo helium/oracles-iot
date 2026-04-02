@@ -11,6 +11,7 @@ use tokio::net::TcpListener;
 use tonic::transport;
 
 pub mod gateway_metadata_db;
+pub mod partial_migrator;
 
 pub fn make_keypair() -> Keypair {
     Keypair::generate(KeyTag::default(), &mut rand::rngs::OsRng)
