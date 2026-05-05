@@ -1,3 +1,5 @@
+pub mod iceberg;
+
 use blake3::hash;
 use chrono::{DateTime, Duration, Utc};
 use file_store::file_sink::{FileSinkClient, Message as SinkMessage};

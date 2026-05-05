@@ -116,6 +116,7 @@ tls-init = { git = "https://github.com/helium/oracles.git", branch = "main" }
 price-tracker = { git = "https://github.com/helium/oracles.git", branch = "main" }
 reward-scheduler = { git = "https://github.com/helium/oracles.git", branch = "main" }
 solana = { git = "https://github.com/helium/oracles.git", branch = "main" }
+helium-iceberg = { git = "https://github.com/helium/oracles.git", branch = "main", default-features = false }
 
 ### AWS
 aws-config = "1.8"

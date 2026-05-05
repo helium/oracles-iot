@@ -52,6 +52,7 @@ db-store = { workspace = true }
 denylist = { workspace = true }
 file-store = { workspace = true }
 file-store-oracles = { workspace = true }
+helium-iceberg = { workspace = true }
 iot-config = { path = "../iot_config" }
 poc-metrics = { workspace = true }
 price = { path = "../price" }
@@ -60,3 +61,7 @@ reward-scheduler = { workspace = true }
 solana = { workspace = true }
 task-manager = { workspace = true }
 tls-init = { workspace = true }
+
+[dev-dependencies]
+helium-iceberg = { workspace = true, features = ["test-harness"] }
+trino-rust-client = "0.9"
