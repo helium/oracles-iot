@@ -113,6 +113,13 @@ impl Cmd {
         )
         .await?;
 
+        let reward_writers = match &settings.iceberg_settings {
+            Some(iceberg_settings) => {
+                Some(crate::iceberg::RewardWriters::from_settings(iceberg_settings).await?)
+            }
+            None => None,
+        };
+
         let rewarder = Rewarder::new(
             pool.clone(),
             rewards_sink,
@@ -121,6 +128,7 @@ impl Cmd {
             settings.reward_period_offset,
             price_tracker,
             sub_dao_rewards_client,
+            reward_writers,
         )?;
 
         // *

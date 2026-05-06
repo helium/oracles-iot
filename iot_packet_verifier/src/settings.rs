@@ -36,6 +36,12 @@ pub struct Settings {
     /// any disabled orgs.
     #[serde(with = "humantime_serde", default = "default_monitor_funds_period")]
     pub monitor_funds_period: Duration,
+
+    /// Iceberg connection settings. When present, the daemon mirrors every
+    /// `ValidPacket` it emits into the configured Iceberg table in addition to
+    /// the existing S3 file sink.
+    #[serde(default)]
+    pub iceberg_settings: Option<helium_iceberg::Settings>,
 }
 
 fn default_start_after() -> DateTime<Utc> {

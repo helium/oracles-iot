@@ -1,52 +1,108 @@
 use crate::{
     balances::BalanceCache,
     burner::Burner,
+    iceberg::{valid_packet, IcebergIotValidPacket, ValidPacketWriter, ValidPacketWriters},
     pending::confirm_pending_txns,
     settings::Settings,
-    verifier::{CachedOrgClient, ConfigServer, Verifier},
+    verifier::{CachedOrgClient, ConfigServer, Debiter, PacketWriter, Verifier},
 };
 use anyhow::{bail, Result};
+use async_trait::async_trait;
 use file_store::{
     file_info_poller::FileInfoStream, file_sink::FileSinkClient, file_source, file_upload,
 };
 use file_store_oracles::{
-    iot_packet::PacketRouterPacketReport,
+    iot_packet::{IotValidPacket, PacketRouterPacketReport},
     traits::{FileSinkCommitStrategy, FileSinkRollTime, FileSinkWriteExt},
     FileType,
 };
 use futures_util::TryFutureExt;
 use helium_proto::services::packet_verifier::{InvalidPacket, ValidPacket};
-use iot_config::client::{org_client::Orgs, OrgClient};
+use iot_config::client::OrgClient;
 use solana::burn::SolanaRpc;
 use sqlx::{Pool, Postgres};
 use std::sync::Arc;
 use task_manager::{ManagedTask, TaskManager};
 use tokio::sync::{mpsc::Receiver, Mutex};
 
-type SharedCachedOrgClient<T> = Arc<Mutex<CachedOrgClient<T>>>;
-
-struct Daemon<O> {
-    pool: Pool<Postgres>,
-    verifier: Verifier<BalanceCache<Option<Arc<SolanaRpc>>>, SharedCachedOrgClient<O>>,
-    report_files: Receiver<FileInfoStream<PacketRouterPacketReport>>,
-    valid_packets: FileSinkClient<ValidPacket>,
-    invalid_packets: FileSinkClient<InvalidPacket>,
-    minimum_allowed_balance: u64,
+/// Wraps the daemon's `ValidPacket` file sink so that every emitted packet is
+/// also captured as an `IcebergIotValidPacket` in `iceberg_buffer`. The buffer
+/// is flushed to the Iceberg writer after each source file is fully processed,
+/// keyed on the source file path so re-runs are idempotent.
+struct ValidPacketIcebergWriter<'a> {
+    inner: &'a mut FileSinkClient<ValidPacket>,
+    iceberg_buffer: &'a mut Vec<IcebergIotValidPacket>,
+    enabled: bool,
 }
 
-impl<O> ManagedTask for Daemon<O>
+#[async_trait]
+impl PacketWriter<ValidPacket> for ValidPacketIcebergWriter<'_> {
+    async fn write(&mut self, packet: ValidPacket) -> Result<(), file_store::Error> {
+        if self.enabled {
+            // The proto → IotValidPacket conversion only fails on out-of-range
+            // timestamps, which would also fail downstream. Emit a single
+            // warning and keep the proto write going.
+            match IotValidPacket::try_from(packet.clone()) {
+                Ok(record) => self.iceberg_buffer.push(valid_packet::from_record(record)),
+                Err(e) => tracing::warn!(error = %e, "skipping iceberg row for invalid packet"),
+            }
+        }
+        // Forwards to the existing `PacketWriter for FileSinkClient` impl,
+        // which internally calls the inherent `FileSinkClient::write` with an
+        // empty metadata array.
+        self.inner.write(packet).await?;
+        Ok(())
+    }
+}
+
+pub type SharedCachedOrgClient<T> = Arc<Mutex<CachedOrgClient<T>>>;
+
+pub struct Daemon<D, C> {
+    pub pool: Pool<Postgres>,
+    pub verifier: Verifier<D, C>,
+    pub report_files: Receiver<FileInfoStream<PacketRouterPacketReport>>,
+    pub valid_packets: FileSinkClient<ValidPacket>,
+    pub invalid_packets: FileSinkClient<InvalidPacket>,
+    pub minimum_allowed_balance: u64,
+    pub iceberg_writer: Option<ValidPacketWriter>,
+}
+
+impl<D, C> ManagedTask for Daemon<D, C>
 where
-    O: Orgs,
+    D: Debiter + Send + Sync + 'static,
+    C: ConfigServer,
 {
     fn start_task(self: Box<Self>, shutdown: triggered::Listener) -> task_manager::TaskFuture {
         task_manager::spawn(self.run(shutdown))
     }
 }
 
-impl<O> Daemon<O>
+impl<D, C> Daemon<D, C>
 where
-    O: Orgs,
+    D: Debiter + Send + Sync,
+    C: ConfigServer,
 {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        pool: Pool<Postgres>,
+        verifier: Verifier<D, C>,
+        report_files: Receiver<FileInfoStream<PacketRouterPacketReport>>,
+        valid_packets: FileSinkClient<ValidPacket>,
+        invalid_packets: FileSinkClient<InvalidPacket>,
+        minimum_allowed_balance: u64,
+        iceberg_writer: Option<ValidPacketWriter>,
+    ) -> Self {
+        Self {
+            pool,
+            verifier,
+            report_files,
+            valid_packets,
+            invalid_packets,
+            minimum_allowed_balance,
+            iceberg_writer,
+        }
+    }
+
     pub async fn run(mut self, shutdown: triggered::Listener) -> Result<()> {
         tracing::info!("Starting verifier daemon");
         loop {
@@ -67,27 +123,42 @@ where
         Ok(())
     }
 
-    async fn handle_file(
+    pub async fn handle_file(
         &mut self,
         report_file: FileInfoStream<PacketRouterPacketReport>,
     ) -> Result<()> {
+        let file_key = report_file.file_info.key.clone();
         tracing::info!(file = %report_file.file_info, "Verifying file");
 
         let mut transaction = self.pool.begin().await?;
         let reports = report_file.into_stream(&mut transaction).await?;
+
+        let mut iceberg_buffer: Vec<IcebergIotValidPacket> = Vec::new();
+        let mut wrapped_valid = ValidPacketIcebergWriter {
+            inner: &mut self.valid_packets,
+            iceberg_buffer: &mut iceberg_buffer,
+            enabled: self.iceberg_writer.is_some(),
+        };
 
         self.verifier
             .verify(
                 self.minimum_allowed_balance,
                 &mut transaction,
                 reports,
-                &mut self.valid_packets,
+                &mut wrapped_valid,
                 &mut self.invalid_packets,
             )
             .await?;
         transaction.commit().await?;
         self.valid_packets.commit().await?;
         self.invalid_packets.commit().await?;
+
+        if let Some(writer) = &self.iceberg_writer {
+            writer
+                .write_idempotent(&file_key, iceberg_buffer)
+                .await
+                .map_err(|e| anyhow::anyhow!("writing iceberg valid_packets: {e}"))?;
+        }
 
         Ok(())
     }
@@ -167,18 +238,28 @@ impl Cmd {
             .create()
             .await?;
 
+        let iceberg_writer = match &settings.iceberg_settings {
+            Some(iceberg_settings) => Some(
+                ValidPacketWriters::from_settings(iceberg_settings)
+                    .await?
+                    .valid_packet,
+            ),
+            None => None,
+        };
+
         let balance_store = balances.balances();
-        let verifier_daemon = Daemon {
+        let verifier_daemon = Daemon::new(
             pool,
-            report_files,
-            valid_packets,
-            invalid_packets,
-            verifier: Verifier {
+            Verifier {
                 debiter: balances,
                 config_server: org_client.clone(),
             },
-            minimum_allowed_balance: settings.minimum_allowed_balance,
-        };
+            report_files,
+            valid_packets,
+            invalid_packets,
+            settings.minimum_allowed_balance,
+            iceberg_writer,
+        );
 
         // Run the services:
         let minimum_allowed_balance = settings.minimum_allowed_balance;

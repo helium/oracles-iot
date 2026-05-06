@@ -12,7 +12,7 @@ async fn test_oracles(_pool: PgPool) -> anyhow::Result<()> {
     let reward_info = rewards_info_24_hours();
 
     let (_, rewards) = tokio::join!(
-        rewarder::reward_oracles(&iot_rewards_client, &reward_info),
+        rewarder::reward_oracles(&iot_rewards_client, &reward_info, None),
         receive_expected_rewards(&mut iot_rewards)
     );
     if let Ok(unallocated_oracle_reward) = rewards {

@@ -1,5 +1,6 @@
 pub mod iceberg;
 
+use async_trait::async_trait;
 use blake3::hash;
 use chrono::{DateTime, Duration, Utc};
 use file_store::file_sink::{FileSinkClient, Message as SinkMessage};
@@ -15,10 +16,10 @@ use helium_proto::{
         LoraBeaconIngestReportV1, LoraInvalidBeaconReportV1, LoraInvalidWitnessReportV1, LoraPocV1,
         LoraWitnessIngestReportV1, OperationalReward, UnallocatedReward,
     },
-    DataRate, Region as ProtoRegion,
+    BlockchainTokenTypeV1, DataRate, Region as ProtoRegion,
 };
 use iot_config::{
-    client::RegionParamsInfo,
+    client::{sub_dao_client::SubDaoEpochRewardInfoResolver, ClientError, RegionParamsInfo},
     gateway::service::info::{GatewayInfo, GatewayMetadata},
 };
 use iot_verifier::{
@@ -28,6 +29,7 @@ use iot_verifier::{
     poc_report::{InsertBindings, IotStatus, Report, ReportType},
     IngestId, PriceInfo,
 };
+use price_tracker::{PriceProvider, PriceTrackerError};
 
 use iot_config::sub_dao_epoch_reward_info::EpochRewardInfo;
 use prost::Message;
@@ -70,6 +72,80 @@ pub fn create_file_sink<T: prost::Message>() -> (FileSinkClient<T>, MockFileSink
         FileSinkClient::new(tx, "metric"),
         MockFileSinkReceiver { receiver: rx },
     )
+}
+
+/// Drains a `FileSinkClient` channel forever, replying `Ok(())` to every
+/// `Data` message and `Ok(empty manifest)` to every `Commit`/`Rollback`.
+/// Use this when a test exercises code that calls `.commit().await?.await??`
+/// (e.g. `Rewarder::reward`) and the test doesn't care about the actual
+/// proto payloads — only that the calls don't deadlock.
+pub fn spawn_file_sink_drainer<T>(
+    mut receiver: MockFileSinkReceiver<T>,
+) -> tokio::task::JoinHandle<()>
+where
+    T: Send + 'static,
+{
+    tokio::spawn(async move {
+        while let Some(msg) = receiver.receiver.recv().await {
+            match msg {
+                SinkMessage::Data(on_write_tx, _) => {
+                    let _ = on_write_tx.send(Ok(()));
+                }
+                SinkMessage::Commit(on_commit_tx) => {
+                    let _ = on_commit_tx.send(Ok(Vec::new()));
+                }
+                SinkMessage::Rollback(on_rollback_tx) => {
+                    let _ = on_rollback_tx.send(Ok(Vec::new()));
+                }
+            }
+        }
+    })
+}
+
+/// Test `PriceProvider` returning a fixed price for any token. Used to
+/// construct a `Rewarder` in tests without standing up a real `PriceTracker`.
+#[derive(Clone, Debug)]
+pub struct TestPriceProvider {
+    pub price: u64,
+}
+
+impl TestPriceProvider {
+    pub fn new(price: u64) -> Self {
+        Self { price }
+    }
+}
+
+#[async_trait]
+impl PriceProvider for TestPriceProvider {
+    async fn price(&self, _token_type: &BlockchainTokenTypeV1) -> Result<u64, PriceTrackerError> {
+        Ok(self.price)
+    }
+}
+
+/// Test `SubDaoEpochRewardInfoResolver` returning a pre-configured
+/// `EpochRewardInfo` regardless of which subdao/epoch is asked for.
+#[derive(Clone, Debug)]
+pub struct MockSubDaoEpochRewardInfoResolver {
+    pub info: EpochRewardInfo,
+}
+
+impl MockSubDaoEpochRewardInfoResolver {
+    pub fn new(info: EpochRewardInfo) -> Self {
+        Self { info }
+    }
+}
+
+#[async_trait]
+impl SubDaoEpochRewardInfoResolver for MockSubDaoEpochRewardInfoResolver {
+    type Error = ClientError;
+
+    async fn resolve_info(
+        &self,
+        _sub_dao: &str,
+        _epoch: u64,
+    ) -> Result<Option<EpochRewardInfo>, ClientError> {
+        Ok(Some(self.info.clone()))
+    }
 }
 
 pub struct MockFileSinkReceiver<T> {

@@ -1,4 +1,8 @@
 use crate::{
+    iceberg::{
+        self, gateway_reward, operational_reward, unallocated_reward, IcebergIotGatewayReward,
+        IcebergIotOperationalReward, IcebergIotUnallocatedReward,
+    },
     resolve_subdao_pubkey,
     reward_share::{self, GatewayShares},
     telemetry, PriceInfo,
@@ -20,7 +24,7 @@ use iot_config::{
     sub_dao_epoch_reward_info::EpochRewardInfo,
     EpochInfo,
 };
-use price_tracker::{PriceProvider, PriceTracker};
+use price_tracker::PriceProvider;
 use reward_scheduler::Scheduler;
 use rust_decimal::prelude::*;
 use rust_decimal_macros::dec;
@@ -32,15 +36,26 @@ use tokio::time::sleep;
 
 const REWARDS_NOT_CURRENT_DELAY_PERIOD: Duration = Duration::from_secs(5 * 60);
 
-pub struct Rewarder<A> {
+/// Per-table buffer of Iceberg rows produced during a single rewarding epoch.
+/// All three tables share the same `helium.write_id` (`rewards-epoch-{day}`)
+/// so re-running the same epoch is idempotent at the iceberg layer.
+#[derive(Default)]
+pub struct RewardRowAccumulator {
+    pub gateway: Vec<IcebergIotGatewayReward>,
+    pub operational: Vec<IcebergIotOperationalReward>,
+    pub unallocated: Vec<IcebergIotUnallocatedReward>,
+}
+
+pub struct Rewarder<A, P> {
     sub_dao: SolPubkey,
     pub pool: Pool<Postgres>,
     pub rewards_sink: file_sink::FileSinkClient<proto::IotRewardShare>,
     pub reward_manifests_sink: file_sink::FileSinkClient<RewardManifest>,
     pub reward_period_hours: Duration,
     pub reward_offset: Duration,
-    pub price_tracker: PriceTracker,
+    pub price_tracker: P,
     sub_dao_epoch_reward_client: A,
+    reward_writers: Option<iceberg::RewardWriters>,
 }
 
 pub struct RewardPocDcDataPoints {
@@ -49,27 +64,31 @@ pub struct RewardPocDcDataPoints {
     dc_transfer_rewards_per_share: Decimal,
 }
 
-impl<A> ManagedTask for Rewarder<A>
+impl<A, P> ManagedTask for Rewarder<A, P>
 where
     A: SubDaoEpochRewardInfoResolver<Error = ClientError> + Send + Sync + 'static,
+    P: PriceProvider + Send + Sync + 'static,
 {
     fn start_task(self: Box<Self>, shutdown: triggered::Listener) -> task_manager::TaskFuture {
         task_manager::spawn(self.run(shutdown))
     }
 }
 
-impl<A> Rewarder<A>
+impl<A, P> Rewarder<A, P>
 where
     A: SubDaoEpochRewardInfoResolver<Error = ClientError> + Send + Sync + 'static,
+    P: PriceProvider + Send + Sync + 'static,
 {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         pool: PgPool,
         rewards_sink: file_sink::FileSinkClient<proto::IotRewardShare>,
         reward_manifests_sink: file_sink::FileSinkClient<RewardManifest>,
         reward_period_hours: Duration,
         reward_offset: Duration,
-        price_tracker: PriceTracker,
+        price_tracker: P,
         sub_dao_epoch_reward_client: A,
+        reward_writers: Option<iceberg::RewardWriters>,
     ) -> anyhow::Result<Self> {
         // get the subdao address
         let sub_dao = resolve_subdao_pubkey();
@@ -83,6 +102,7 @@ where
             reward_offset,
             price_tracker,
             sub_dao_epoch_reward_client,
+            reward_writers,
         })
     }
 
@@ -169,23 +189,45 @@ where
             reward_info.epoch_emissions,
         );
 
+        let mut iceberg_rows = self
+            .reward_writers
+            .is_some()
+            .then(RewardRowAccumulator::default);
+
         // process rewards for poc and dc
         let poc_dc_shares = reward_poc_and_dc(
             &self.pool,
             &self.rewards_sink,
             &reward_info,
             price_info.clone(),
+            iceberg_rows.as_mut(),
         )
         .await?;
 
         // process rewards for the operational fund
-        reward_operational(&self.rewards_sink, &reward_info).await?;
+        reward_operational(&self.rewards_sink, &reward_info, iceberg_rows.as_mut()).await?;
 
         // process rewards for the oracle
-        reward_oracles(&self.rewards_sink, &reward_info).await?;
+        reward_oracles(&self.rewards_sink, &reward_info, iceberg_rows.as_mut()).await?;
 
         // commit the filesink
         let written_files = self.rewards_sink.commit().await?.await??;
+
+        if let (Some(writers), Some(rows)) = (self.reward_writers.as_ref(), iceberg_rows) {
+            let write_id = format!("rewards-epoch-{}", reward_info.epoch_day);
+            writers
+                .gateway
+                .write_idempotent(&write_id, rows.gateway)
+                .await?;
+            writers
+                .operational
+                .write_idempotent(&write_id, rows.operational)
+                .await?;
+            writers
+                .unallocated
+                .write_idempotent(&write_id, rows.unallocated)
+                .await?;
+        }
 
         let mut transaction = self.pool.begin().await?;
 
@@ -278,6 +320,7 @@ pub async fn reward_poc_and_dc(
     rewards_sink: &file_sink::FileSinkClient<proto::IotRewardShare>,
     reward_info: &EpochRewardInfo,
     price_info: PriceInfo,
+    mut iceberg_rows: Option<&mut RewardRowAccumulator>,
 ) -> anyhow::Result<RewardPocDcDataPoints> {
     let reward_shares =
         reward_share::aggregate_reward_shares(pool, &reward_info.epoch_period).await?;
@@ -294,6 +337,9 @@ pub async fn reward_poc_and_dc(
     let total_poc_dc_reward_allocation =
         total_beacon_rewards + total_witness_rewards + total_dc_rewards;
 
+    let start_period_secs = reward_info.epoch_period.start.encode_timestamp();
+    let end_period_secs = reward_info.epoch_period.end.encode_timestamp();
+
     let mut allocated_gateway_rewards = 0_u64;
     for (gateway_reward_amount, reward_share) in gateway_shares.into_reward_shares(
         &reward_info.epoch_period,
@@ -301,6 +347,15 @@ pub async fn reward_poc_and_dc(
         witness_rewards_per_share,
         dc_transfer_rewards_per_share,
     ) {
+        if let Some(rows) = iceberg_rows.as_mut() {
+            if let Some(ProtoReward::GatewayReward(ref gw)) = reward_share.reward {
+                if let Ok(row) =
+                    gateway_reward::from_proto(gw.clone(), start_period_secs, end_period_secs)
+                {
+                    rows.gateway.push(row);
+                }
+            }
+        }
         rewards_sink
             .write(reward_share, [])
             .await?
@@ -319,6 +374,7 @@ pub async fn reward_poc_and_dc(
         UnallocatedRewardType::Poc,
         unallocated_poc_reward_amount,
         &reward_info.epoch_period,
+        iceberg_rows,
     )
     .await?;
     Ok(RewardPocDcDataPoints {
@@ -331,6 +387,7 @@ pub async fn reward_poc_and_dc(
 pub async fn reward_operational(
     rewards_sink: &file_sink::FileSinkClient<proto::IotRewardShare>,
     reward_info: &EpochRewardInfo,
+    mut iceberg_rows: Option<&mut RewardRowAccumulator>,
 ) -> anyhow::Result<()> {
     let total_operational_rewards =
         reward_share::get_scheduled_ops_fund_tokens(reward_info.epoch_emissions);
@@ -341,11 +398,20 @@ pub async fn reward_operational(
     let op_fund_reward = proto::OperationalReward {
         amount: allocated_operational_rewards,
     };
+    let start_period_secs = reward_info.epoch_period.start.encode_timestamp();
+    let end_period_secs = reward_info.epoch_period.end.encode_timestamp();
+    if let Some(rows) = iceberg_rows.as_mut() {
+        if let Ok(row) =
+            operational_reward::from_proto(op_fund_reward, start_period_secs, end_period_secs)
+        {
+            rows.operational.push(row);
+        }
+    }
     rewards_sink
         .write(
             proto::IotRewardShare {
-                start_period: reward_info.epoch_period.start.encode_timestamp(),
-                end_period: reward_info.epoch_period.end.encode_timestamp(),
+                start_period: start_period_secs,
+                end_period: end_period_secs,
                 reward: Some(ProtoReward::OperationalReward(op_fund_reward)),
             },
             [],
@@ -368,6 +434,7 @@ pub async fn reward_operational(
         UnallocatedRewardType::Operation,
         unallocated_operation_reward_amount,
         &reward_info.epoch_period,
+        iceberg_rows,
     )
     .await?;
     Ok(())
@@ -376,6 +443,7 @@ pub async fn reward_operational(
 pub async fn reward_oracles(
     rewards_sink: &file_sink::FileSinkClient<proto::IotRewardShare>,
     reward_info: &EpochRewardInfo,
+    iceberg_rows: Option<&mut RewardRowAccumulator>,
 ) -> anyhow::Result<()> {
     // atm 100% of oracle rewards are assigned to 'unallocated'
     let total_oracle_rewards =
@@ -391,6 +459,7 @@ pub async fn reward_oracles(
         UnallocatedRewardType::Oracle,
         unallocated_oracle_reward_amount,
         &reward_info.epoch_period,
+        iceberg_rows,
     )
     .await?;
     Ok(())
@@ -401,15 +470,26 @@ async fn write_unallocated_reward(
     unallocated_type: UnallocatedRewardType,
     unallocated_amount: u64,
     reward_period: &Range<DateTime<Utc>>,
+    iceberg_rows: Option<&mut RewardRowAccumulator>,
 ) -> anyhow::Result<()> {
     if unallocated_amount > 0 {
+        let unallocated = UnallocatedReward {
+            reward_type: unallocated_type as i32,
+            amount: unallocated_amount,
+        };
+        let start_period_secs = reward_period.start.encode_timestamp();
+        let end_period_secs = reward_period.end.encode_timestamp();
+        if let Some(rows) = iceberg_rows {
+            if let Ok(row) =
+                unallocated_reward::from_proto(unallocated, start_period_secs, end_period_secs)
+            {
+                rows.unallocated.push(row);
+            }
+        }
         let unallocated_reward = proto::IotRewardShare {
-            start_period: reward_period.start.encode_timestamp(),
-            end_period: reward_period.end.encode_timestamp(),
-            reward: Some(ProtoReward::UnallocatedReward(UnallocatedReward {
-                reward_type: unallocated_type as i32,
-                amount: unallocated_amount,
-            })),
+            start_period: start_period_secs,
+            end_period: end_period_secs,
+            reward: Some(ProtoReward::UnallocatedReward(unallocated)),
         };
         rewards_sink.write(unallocated_reward, []).await?.await??;
     };
