@@ -4,13 +4,16 @@ use file_store_oracles::FileType;
 use helium_crypto::PublicKeyBinary;
 use helium_iceberg::{BoxedDataWriter, IcebergTestHarness, IntoBoxedDataWriter};
 use helium_proto::services::poc_lora::{IotRewardShare, UnallocatedRewardType};
-use iot_verifier::backfill::{
-    rewards::{IotRewardRow, IotRewardsBackfiller, IotRewardsFanoutWriter},
-    BackfillOptions,
-};
 use iot_verifier::iceberg::{
     self, gateway_reward, operational_reward, unallocated_reward, IcebergIotGatewayReward,
     IcebergIotOperationalReward, IcebergIotUnallocatedReward,
+};
+use iot_verifier::{
+    backfill::{
+        rewards::{IotRewardRow, IotRewardsBackfiller, IotRewardsFanoutWriter},
+        BackfillOptions,
+    },
+    iceberg::NAMESPACE,
 };
 use sqlx::PgPool;
 use trino_rust_client::Trino;
@@ -66,6 +69,239 @@ struct UnallocatedRewardRow {
     end_period: chrono::DateTime<chrono::FixedOffset>,
 }
 
+#[sqlx::test]
+async fn backfill_writes_all_three_reward_variants(pool: PgPool) -> anyhow::Result<()> {
+    let harness = setup_iceberg().await?;
+    let writer = fanout_writer(&harness).await?;
+
+    let awsl = AwsLocal::new().await;
+    awsl.create_bucket().await?;
+
+    let pubkey: PublicKeyBinary = "112NqN2WWMwtK29PMzRby62fDydBJfsCLkCAf392stdok48ovNT6".parse()?;
+    let base = Utc::now() - Duration::hours(1);
+    let start_time = base - Duration::minutes(1);
+    let end_time = base + Duration::days(1);
+
+    let start_period = base.timestamp() as u64;
+    let end_period = (base + Duration::hours(1)).timestamp() as u64;
+
+    put_share_at(
+        &awsl,
+        gateway_reward_share(
+            pubkey.as_ref().to_vec(),
+            10,
+            20,
+            30,
+            start_period,
+            end_period,
+        ),
+        base,
+    )
+    .await?;
+    put_share_at(
+        &awsl,
+        operational_reward_share(7_000, start_period, end_period),
+        base + Duration::seconds(1),
+    )
+    .await?;
+    put_share_at(
+        &awsl,
+        unallocated_reward_share(UnallocatedRewardType::Poc, 5_000, start_period, end_period),
+        base + Duration::seconds(2),
+    )
+    .await?;
+
+    let opts = test_backfill_options("rewards-backfill-all-variants", start_time, end_time);
+    run_backfill(pool, awsl.bucket_client(), writer, opts).await?;
+
+    let gateways: Vec<GatewayRewardRow> = get_all_or_empty(
+        harness.trino(),
+        format!("SELECT * FROM {}.{}", NAMESPACE, gateway_reward::TABLE_NAME),
+    )
+    .await?;
+    assert_eq!(gateways.len(), 1, "expected 1 gateway reward");
+    assert_eq!(gateways[0].hotspot_key, pubkey.to_string());
+    assert_eq!(gateways[0].beacon_amount, 10);
+    assert_eq!(gateways[0].witness_amount, 20);
+    assert_eq!(gateways[0].dc_transfer_amount, 30);
+
+    let ops: Vec<OperationalRewardRow> = get_all_or_empty(
+        harness.trino(),
+        format!(
+            "SELECT * FROM {}.{}",
+            NAMESPACE,
+            operational_reward::TABLE_NAME
+        ),
+    )
+    .await?;
+    assert_eq!(ops.len(), 1, "expected 1 operational reward");
+    assert_eq!(ops[0].amount, 7_000);
+
+    let unalloc: Vec<UnallocatedRewardRow> = get_all_or_empty(
+        harness.trino(),
+        format!(
+            "SELECT * FROM {}.{}",
+            NAMESPACE,
+            unallocated_reward::TABLE_NAME
+        ),
+    )
+    .await?;
+    assert_eq!(unalloc.len(), 1, "expected 1 unallocated reward");
+    assert_eq!(unalloc[0].reward_type, "Poc");
+    assert_eq!(unalloc[0].amount, 5_000);
+
+    awsl.cleanup().await?;
+    Ok(())
+}
+
+#[sqlx::test]
+async fn backfill_skips_files_after_stop_after(pool: PgPool) -> anyhow::Result<()> {
+    let harness = setup_iceberg().await?;
+    let writer = fanout_writer(&harness).await?;
+
+    let awsl = AwsLocal::new().await;
+    awsl.create_bucket().await?;
+
+    let pubkey: PublicKeyBinary = "112NqN2WWMwtK29PMzRby62fDydBJfsCLkCAf392stdok48ovNT6".parse()?;
+    let base = Utc::now() - Duration::hours(2);
+    let start_time = base - Duration::minutes(1);
+    let early_time = base;
+    let stop_time = base + Duration::minutes(45);
+    let late_time = base + Duration::hours(1); // beyond stop_after
+
+    let start_period = base.timestamp() as u64;
+    let end_period = (base + Duration::hours(1)).timestamp() as u64;
+
+    put_share_at(
+        &awsl,
+        gateway_reward_share(pubkey.as_ref().to_vec(), 1, 2, 3, start_period, end_period),
+        early_time,
+    )
+    .await?;
+    put_share_at(
+        &awsl,
+        gateway_reward_share(pubkey.as_ref().to_vec(), 4, 5, 6, start_period, end_period),
+        late_time,
+    )
+    .await?;
+
+    let opts = test_backfill_options("rewards-backfill-stop-after", start_time, stop_time);
+    run_backfill(pool, awsl.bucket_client(), writer, opts).await?;
+
+    let gateways: Vec<GatewayRewardRow> = get_all_or_empty(
+        harness.trino(),
+        format!("SELECT * FROM {}.{}", NAMESPACE, gateway_reward::TABLE_NAME),
+    )
+    .await?;
+    assert_eq!(
+        gateways.len(),
+        1,
+        "expected only the early file (the late file is past stop_after)"
+    );
+    assert_eq!(gateways[0].beacon_amount, 1);
+
+    awsl.cleanup().await?;
+    Ok(())
+}
+
+/// The writer's `helium.write_id` snapshot property is what keeps re-runs over
+/// the same source files from duplicating rows in iceberg. Test that directly
+/// (the backfiller's own file-state tracking would already short-circuit a
+/// double-run before reaching the writer).
+#[tokio::test]
+async fn fanout_writer_is_idempotent_on_same_id() -> anyhow::Result<()> {
+    let harness = setup_iceberg().await?;
+    let writer = fanout_writer(&harness).await?;
+
+    let pubkey: PublicKeyBinary = "112NqN2WWMwtK29PMzRby62fDydBJfsCLkCAf392stdok48ovNT6".parse()?;
+    let base = Utc::now() - Duration::hours(1);
+    let start_period = base.timestamp() as u64;
+    let end_period = (base + Duration::hours(1)).timestamp() as u64;
+
+    let row = IotRewardRow::Gateway(gateway_reward::from_proto(
+        helium_proto::services::poc_lora::GatewayReward {
+            hotspot_key: pubkey.as_ref().to_vec(),
+            beacon_amount: 42,
+            witness_amount: 42,
+            dc_transfer_amount: 42,
+        },
+        start_period,
+        end_period,
+    )?);
+
+    let write_id = "rewards/file-key-abc.gz";
+    writer.write_idempotent(write_id, vec![row.clone()]).await?;
+    writer.write_idempotent(write_id, vec![row]).await?;
+
+    let gateways: Vec<GatewayRewardRow> = get_all_or_empty(
+        harness.trino(),
+        format!("SELECT * FROM {}.{}", NAMESPACE, gateway_reward::TABLE_NAME),
+    )
+    .await?;
+    assert_eq!(
+        gateways.len(),
+        1,
+        "second write with same id should be a no-op"
+    );
+
+    Ok(())
+}
+
+#[sqlx::test]
+async fn backfill_skips_records_with_empty_oneof(pool: PgPool) -> anyhow::Result<()> {
+    let harness = setup_iceberg().await?;
+    let writer = fanout_writer(&harness).await?;
+
+    let awsl = AwsLocal::new().await;
+    awsl.create_bucket().await?;
+
+    let base = Utc::now() - Duration::hours(1);
+    let start_time = base - Duration::minutes(1);
+    let end_time = base + Duration::days(1);
+
+    let pubkey: PublicKeyBinary = "112NqN2WWMwtK29PMzRby62fDydBJfsCLkCAf392stdok48ovNT6".parse()?;
+    let start_period = base.timestamp() as u64;
+    let end_period = (base + Duration::hours(1)).timestamp() as u64;
+    let empty = IotRewardShare {
+        start_period,
+        end_period,
+        reward: None,
+    };
+    let real = gateway_reward_share(pubkey.as_ref().to_vec(), 1, 1, 1, start_period, end_period);
+
+    awsl.put_protos_at_time(
+        FileType::IotRewardShare.to_string(),
+        vec![empty, real],
+        base,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("put proto: {e}"))?;
+
+    let opts = test_backfill_options("rewards-backfill-skip-empty", start_time, end_time);
+    run_backfill(pool, awsl.bucket_client(), writer, opts).await?;
+
+    let gateways: Vec<GatewayRewardRow> = get_all_or_empty(
+        harness.trino(),
+        format!("SELECT * FROM {}.{}", NAMESPACE, gateway_reward::TABLE_NAME),
+    )
+    .await?;
+    assert_eq!(gateways.len(), 1, "empty oneof should be skipped");
+
+    let ops: Vec<OperationalRewardRow> = get_all_or_empty(
+        harness.trino(),
+        format!(
+            "SELECT * FROM {}.{}",
+            NAMESPACE,
+            operational_reward::TABLE_NAME
+        ),
+    )
+    .await?;
+    assert!(ops.is_empty());
+
+    awsl.cleanup().await?;
+    Ok(())
+}
+
 async fn fanout_writer(
     harness: &IcebergTestHarness,
 ) -> anyhow::Result<BoxedDataWriter<IotRewardRow>> {
@@ -115,226 +351,5 @@ async fn run_backfill(
     )
     .await
     .map_err(|_| anyhow::anyhow!("backfill timed out after {:?}", TEST_TIMEOUT))??;
-    Ok(())
-}
-
-#[sqlx::test]
-async fn backfill_writes_all_three_reward_variants(pool: PgPool) -> anyhow::Result<()> {
-    let harness = setup_iceberg().await?;
-    let writer = fanout_writer(&harness).await?;
-
-    let awsl = AwsLocal::new().await;
-    awsl.create_bucket().await?;
-
-    let pubkey: PublicKeyBinary = "112NqN2WWMwtK29PMzRby62fDydBJfsCLkCAf392stdok48ovNT6".parse()?;
-    let base = Utc::now() - Duration::hours(1);
-    let start_time = base - Duration::minutes(1);
-    let end_time = base + Duration::days(1);
-
-    let start_period = base.timestamp() as u64;
-    let end_period = (base + Duration::hours(1)).timestamp() as u64;
-
-    put_share_at(
-        &awsl,
-        gateway_reward_share(
-            pubkey.as_ref().to_vec(),
-            10,
-            20,
-            30,
-            start_period,
-            end_period,
-        ),
-        base,
-    )
-    .await?;
-    put_share_at(
-        &awsl,
-        operational_reward_share(7_000, start_period, end_period),
-        base + Duration::seconds(1),
-    )
-    .await?;
-    put_share_at(
-        &awsl,
-        unallocated_reward_share(UnallocatedRewardType::Poc, 5_000, start_period, end_period),
-        base + Duration::seconds(2),
-    )
-    .await?;
-
-    let opts = test_backfill_options("rewards-backfill-all-variants", start_time, end_time);
-    run_backfill(pool, awsl.bucket_client(), writer, opts).await?;
-
-    let gateways: Vec<GatewayRewardRow> = get_all_or_empty(
-        harness.trino(),
-        format!("SELECT * FROM rewards.{}", gateway_reward::TABLE_NAME),
-    )
-    .await?;
-    assert_eq!(gateways.len(), 1, "expected 1 gateway reward");
-    assert_eq!(gateways[0].hotspot_key, pubkey.to_string());
-    assert_eq!(gateways[0].beacon_amount, 10);
-    assert_eq!(gateways[0].witness_amount, 20);
-    assert_eq!(gateways[0].dc_transfer_amount, 30);
-
-    let ops: Vec<OperationalRewardRow> = get_all_or_empty(
-        harness.trino(),
-        format!("SELECT * FROM rewards.{}", operational_reward::TABLE_NAME),
-    )
-    .await?;
-    assert_eq!(ops.len(), 1, "expected 1 operational reward");
-    assert_eq!(ops[0].amount, 7_000);
-
-    let unalloc: Vec<UnallocatedRewardRow> = get_all_or_empty(
-        harness.trino(),
-        format!("SELECT * FROM rewards.{}", unallocated_reward::TABLE_NAME),
-    )
-    .await?;
-    assert_eq!(unalloc.len(), 1, "expected 1 unallocated reward");
-    assert_eq!(unalloc[0].reward_type, "Poc");
-    assert_eq!(unalloc[0].amount, 5_000);
-
-    awsl.cleanup().await?;
-    Ok(())
-}
-
-#[sqlx::test]
-async fn backfill_skips_files_after_stop_after(pool: PgPool) -> anyhow::Result<()> {
-    let harness = setup_iceberg().await?;
-    let writer = fanout_writer(&harness).await?;
-
-    let awsl = AwsLocal::new().await;
-    awsl.create_bucket().await?;
-
-    let pubkey: PublicKeyBinary = "112NqN2WWMwtK29PMzRby62fDydBJfsCLkCAf392stdok48ovNT6".parse()?;
-    let base = Utc::now() - Duration::hours(2);
-    let start_time = base - Duration::minutes(1);
-    let early_time = base;
-    let stop_time = base + Duration::minutes(45);
-    let late_time = base + Duration::hours(1); // beyond stop_after
-
-    let start_period = base.timestamp() as u64;
-    let end_period = (base + Duration::hours(1)).timestamp() as u64;
-
-    put_share_at(
-        &awsl,
-        gateway_reward_share(pubkey.as_ref().to_vec(), 1, 2, 3, start_period, end_period),
-        early_time,
-    )
-    .await?;
-    put_share_at(
-        &awsl,
-        gateway_reward_share(pubkey.as_ref().to_vec(), 4, 5, 6, start_period, end_period),
-        late_time,
-    )
-    .await?;
-
-    let opts = test_backfill_options("rewards-backfill-stop-after", start_time, stop_time);
-    run_backfill(pool, awsl.bucket_client(), writer, opts).await?;
-
-    let gateways: Vec<GatewayRewardRow> = get_all_or_empty(
-        harness.trino(),
-        format!("SELECT * FROM rewards.{}", gateway_reward::TABLE_NAME),
-    )
-    .await?;
-    assert_eq!(
-        gateways.len(),
-        1,
-        "expected only the early file (the late file is past stop_after)"
-    );
-    assert_eq!(gateways[0].beacon_amount, 1);
-
-    awsl.cleanup().await?;
-    Ok(())
-}
-
-/// The writer's `helium.write_id` snapshot property is what keeps re-runs over
-/// the same source files from duplicating rows in iceberg. Test that directly
-/// (the backfiller's own file-state tracking would already short-circuit a
-/// double-run before reaching the writer).
-#[tokio::test]
-async fn fanout_writer_is_idempotent_on_same_id() -> anyhow::Result<()> {
-    let harness = setup_iceberg().await?;
-    let writer = fanout_writer(&harness).await?;
-
-    let pubkey: PublicKeyBinary = "112NqN2WWMwtK29PMzRby62fDydBJfsCLkCAf392stdok48ovNT6".parse()?;
-    let base = Utc::now() - Duration::hours(1);
-    let start_period = base.timestamp() as u64;
-    let end_period = (base + Duration::hours(1)).timestamp() as u64;
-
-    let row = IotRewardRow::Gateway(gateway_reward::from_proto(
-        helium_proto::services::poc_lora::GatewayReward {
-            hotspot_key: pubkey.as_ref().to_vec(),
-            beacon_amount: 42,
-            witness_amount: 42,
-            dc_transfer_amount: 42,
-        },
-        start_period,
-        end_period,
-    )?);
-
-    let write_id = "rewards/file-key-abc.gz";
-    writer.write_idempotent(write_id, vec![row.clone()]).await?;
-    writer.write_idempotent(write_id, vec![row]).await?;
-
-    let gateways: Vec<GatewayRewardRow> = get_all_or_empty(
-        harness.trino(),
-        format!("SELECT * FROM rewards.{}", gateway_reward::TABLE_NAME),
-    )
-    .await?;
-    assert_eq!(
-        gateways.len(),
-        1,
-        "second write with same id should be a no-op"
-    );
-
-    Ok(())
-}
-
-#[sqlx::test]
-async fn backfill_skips_records_with_empty_oneof(pool: PgPool) -> anyhow::Result<()> {
-    let harness = setup_iceberg().await?;
-    let writer = fanout_writer(&harness).await?;
-
-    let awsl = AwsLocal::new().await;
-    awsl.create_bucket().await?;
-
-    let base = Utc::now() - Duration::hours(1);
-    let start_time = base - Duration::minutes(1);
-    let end_time = base + Duration::days(1);
-
-    let pubkey: PublicKeyBinary = "112NqN2WWMwtK29PMzRby62fDydBJfsCLkCAf392stdok48ovNT6".parse()?;
-    let start_period = base.timestamp() as u64;
-    let end_period = (base + Duration::hours(1)).timestamp() as u64;
-    let empty = IotRewardShare {
-        start_period,
-        end_period,
-        reward: None,
-    };
-    let real = gateway_reward_share(pubkey.as_ref().to_vec(), 1, 1, 1, start_period, end_period);
-
-    awsl.put_protos_at_time(
-        FileType::IotRewardShare.to_string(),
-        vec![empty, real],
-        base,
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("put proto: {e}"))?;
-
-    let opts = test_backfill_options("rewards-backfill-skip-empty", start_time, end_time);
-    run_backfill(pool, awsl.bucket_client(), writer, opts).await?;
-
-    let gateways: Vec<GatewayRewardRow> = get_all_or_empty(
-        harness.trino(),
-        format!("SELECT * FROM rewards.{}", gateway_reward::TABLE_NAME),
-    )
-    .await?;
-    assert_eq!(gateways.len(), 1, "empty oneof should be skipped");
-
-    let ops: Vec<OperationalRewardRow> = get_all_or_empty(
-        harness.trino(),
-        format!("SELECT * FROM rewards.{}", operational_reward::TABLE_NAME),
-    )
-    .await?;
-    assert!(ops.is_empty());
-
-    awsl.cleanup().await?;
     Ok(())
 }

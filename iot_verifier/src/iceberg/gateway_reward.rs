@@ -1,3 +1,5 @@
+use super::into_offset;
+use crate::iceberg::NAMESPACE;
 use chrono::{DateTime, FixedOffset};
 use file_store::traits::{TimestampDecode, TimestampDecodeError};
 use helium_crypto::PublicKeyBinary;
@@ -5,10 +7,7 @@ use helium_iceberg::{FieldDefinition, PartitionDefinition, SortFieldDefinition, 
 use helium_proto::services::poc_lora::GatewayReward;
 use serde::{Deserialize, Serialize};
 
-use super::into_offset;
-
-pub use super::REWARDS_NAMESPACE as NAMESPACE;
-pub const TABLE_NAME: &str = "iot_gateway_rewards";
+pub const TABLE_NAME: &str = "gateway_rewards";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct IcebergIotGatewayReward {

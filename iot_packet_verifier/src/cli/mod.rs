@@ -1,13 +1,13 @@
-pub mod backfill_rewards;
+pub mod backfill_valid_packets;
 pub mod server;
 
-use crate::{backfill, Settings};
+use crate::{backfill, settings::Settings};
 use anyhow::Result;
 use std::path;
 
 #[derive(Debug, clap::Parser)]
 #[clap(version = env!("CARGO_PKG_VERSION"))]
-#[clap(about = "Helium POC IOT Verifier")]
+#[clap(about = "Helium IOT Packet Verifier")]
 pub struct Cli {
     /// Optional configuration file to use. If present the toml file at the
     /// given path will be loaded. Environment variables can override the
@@ -28,7 +28,7 @@ impl Cli {
 #[derive(Debug, clap::Subcommand)]
 pub enum Cmd {
     Server(server::Cmd),
-    BackfillRewards(backfill_rewards::Cmd),
+    BackfillValidPackets(backfill_valid_packets::Cmd),
 }
 
 impl Cmd {
@@ -36,9 +36,9 @@ impl Cmd {
         match self {
             Self::Server(cmd) => {
                 let settings = Settings::new(config)?;
-                cmd.run(&settings).await
+                cmd.run(settings).await
             }
-            Self::BackfillRewards(cmd) => {
+            Self::BackfillValidPackets(cmd) => {
                 let settings = backfill::settings::Settings::new(config)?;
                 cmd.run(&settings).await
             }

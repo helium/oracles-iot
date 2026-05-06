@@ -1,13 +1,12 @@
+use super::into_offset;
+use crate::iceberg::NAMESPACE;
 use chrono::{DateTime, FixedOffset};
 use file_store::traits::{TimestampDecode, TimestampDecodeError};
 use helium_iceberg::{FieldDefinition, PartitionDefinition, SortFieldDefinition, TableDefinition};
 use helium_proto::services::poc_lora::OperationalReward;
 use serde::{Deserialize, Serialize};
 
-use super::into_offset;
-
-pub use super::REWARDS_NAMESPACE as NAMESPACE;
-pub const TABLE_NAME: &str = "iot_operational_rewards";
+pub const TABLE_NAME: &str = "operational_rewards";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct IcebergIotOperationalReward {

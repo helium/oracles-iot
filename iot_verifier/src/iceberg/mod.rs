@@ -4,21 +4,17 @@ use helium_iceberg::{BoxedDataWriter, IntoBoxedDataWriter};
 
 pub mod gateway_reward;
 pub mod operational_reward;
-pub mod reward_manifest;
 pub mod unallocated_reward;
 
 pub use gateway_reward::IcebergIotGatewayReward;
 pub use operational_reward::IcebergIotOperationalReward;
-pub use reward_manifest::IcebergIotRewardManifest;
 pub use unallocated_reward::IcebergIotUnallocatedReward;
 
-pub const NAMESPACE: &str = "poc";
-pub const REWARDS_NAMESPACE: &str = "rewards";
+pub const NAMESPACE: &str = "rewards";
 
 pub type GatewayRewardWriter = BoxedDataWriter<IcebergIotGatewayReward>;
 pub type OperationalRewardWriter = BoxedDataWriter<IcebergIotOperationalReward>;
 pub type UnallocatedRewardWriter = BoxedDataWriter<IcebergIotUnallocatedReward>;
-pub type RewardManifestWriter = BoxedDataWriter<IcebergIotRewardManifest>;
 
 pub struct RewardWriters {
     pub gateway: GatewayRewardWriter,
@@ -31,7 +27,7 @@ impl RewardWriters {
         tracing::info!("connecting to iceberg catalog for iot reward backfill");
         let catalog = settings.connect().await.context("connecting to catalog")?;
         catalog
-            .create_namespace_if_not_exists(REWARDS_NAMESPACE)
+            .create_namespace_if_not_exists(NAMESPACE)
             .await
             .context("creating rewards namespace")?;
 
@@ -56,29 +52,6 @@ impl RewardWriters {
             operational,
             unallocated,
         })
-    }
-}
-
-pub struct BurnsWriters {
-    pub reward_manifest: RewardManifestWriter,
-}
-
-impl BurnsWriters {
-    pub async fn from_settings(settings: &helium_iceberg::Settings) -> anyhow::Result<Self> {
-        tracing::info!("connecting to iceberg catalog for iot burns backfill");
-        let catalog = settings.connect().await.context("connecting to catalog")?;
-        catalog
-            .create_namespace_if_not_exists(NAMESPACE)
-            .await
-            .context("creating poc namespace")?;
-
-        let reward_manifest = catalog
-            .create_table_if_not_exists(reward_manifest::table_definition()?)
-            .await
-            .context("creating iot_reward_manifests table")?
-            .boxed();
-
-        Ok(Self { reward_manifest })
     }
 }
 

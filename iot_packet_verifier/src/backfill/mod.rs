@@ -12,8 +12,8 @@ use std::time::Duration;
 use task_manager::ManagedTask;
 use tokio::sync::mpsc::Receiver;
 
-pub mod rewards;
 pub mod settings;
+pub mod valid_packets;
 
 pub trait IcebergBackfill: Send + 'static {
     type FileRecord: MsgDecode + Clone + Send + Sync + 'static;

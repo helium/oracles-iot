@@ -1,6 +1,6 @@
 use crate::{
-    backfill::{burns::IotBurnsBackfiller, settings::Settings, BackfillOptions},
-    iceberg::BurnsWriters,
+    backfill::{settings::Settings, valid_packets::IotValidPacketsBackfiller, BackfillOptions},
+    iceberg::ValidPacketWriters,
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -8,8 +8,8 @@ use task_manager::TaskManager;
 
 #[derive(Debug, clap::Args)]
 pub struct Cmd {
-    /// Process name for tracking iot reward manifest backfill (avoids conflict with daemon).
-    #[clap(long, default_value = "iot-burns-backfill")]
+    /// Process name for tracking iot valid packet backfill (avoids conflict with daemon).
+    #[clap(long, default_value = "iot-valid-packets-backfill")]
     process_name: String,
 
     /// Start processing files after this timestamp.
@@ -29,24 +29,23 @@ impl Cmd {
 
         let pool = settings
             .database
-            .connect("iot-verifier-burns-backfill")
+            .connect("iot-packet-verifier-valid-packets-backfill")
             .await?;
         sqlx::migrate!().run(&pool).await?;
 
-        let iceberg_settings = settings
-            .iceberg_settings
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("iceberg_settings required for burns backfill"))?;
+        let iceberg_settings = settings.iceberg_settings.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("iceberg_settings required for valid packets backfill")
+        })?;
 
-        let writer = BurnsWriters::from_settings(iceberg_settings)
+        let writer = ValidPacketWriters::from_settings(iceberg_settings)
             .await?
-            .reward_manifest;
+            .valid_packet;
 
         tracing::info!(
             process_name = %self.process_name,
             start_after = %self.start_after,
             stop_after = %self.stop_after,
-            "starting iot burns backfill"
+            "starting iot valid packets backfill"
         );
 
         let opts = BackfillOptions {
@@ -57,7 +56,7 @@ impl Cmd {
             idle_timeout: None,
         };
 
-        let (backfiller, server) = IotBurnsBackfiller::create(
+        let (backfiller, server) = IotValidPacketsBackfiller::create(
             pool,
             settings.ingest_bucket.connect().await,
             Some(writer),
@@ -71,7 +70,6 @@ impl Cmd {
             .build()
             .start()
             .await?;
-
         Ok(())
     }
 }

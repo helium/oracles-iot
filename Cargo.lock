@@ -4693,6 +4693,7 @@ dependencies = [
  "futures",
  "futures-util",
  "helium-crypto",
+ "helium-iceberg",
  "helium-proto",
  "http 1.4.0",
  "http-serde",
@@ -4712,6 +4713,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "triggered",
+ "trino-rust-client",
 ]
 
 [[package]]
