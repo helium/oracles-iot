@@ -1,18 +1,19 @@
 use crate::{
     balances::BalanceCache,
     burner::Burner,
-    iceberg::{valid_packet, IcebergIotValidPacket, ValidPacketWriter, ValidPacketWriters},
+    iceberg::{
+        IcebergIotValidPacket, ValidPacketIcebergWriter, ValidPacketWriter, ValidPacketWriters,
+    },
     pending::confirm_pending_txns,
     settings::Settings,
-    verifier::{CachedOrgClient, ConfigServer, Debiter, PacketWriter, Verifier},
+    verifier::{CachedOrgClient, ConfigServer, Debiter, Verifier},
 };
 use anyhow::{bail, Result};
-use async_trait::async_trait;
 use file_store::{
     file_info_poller::FileInfoStream, file_sink::FileSinkClient, file_source, file_upload,
 };
 use file_store_oracles::{
-    iot_packet::{IotValidPacket, PacketRouterPacketReport},
+    iot_packet::PacketRouterPacketReport,
     traits::{FileSinkCommitStrategy, FileSinkRollTime, FileSinkWriteExt},
     FileType,
 };
@@ -24,36 +25,6 @@ use sqlx::{Pool, Postgres};
 use std::sync::Arc;
 use task_manager::{ManagedTask, TaskManager};
 use tokio::sync::{mpsc::Receiver, Mutex};
-
-/// Wraps the daemon's `ValidPacket` file sink so that every emitted packet is
-/// also captured as an `IcebergIotValidPacket` in `iceberg_buffer`. The buffer
-/// is flushed to the Iceberg writer after each source file is fully processed,
-/// keyed on the source file path so re-runs are idempotent.
-struct ValidPacketIcebergWriter<'a> {
-    inner: &'a mut FileSinkClient<ValidPacket>,
-    iceberg_buffer: &'a mut Vec<IcebergIotValidPacket>,
-    enabled: bool,
-}
-
-#[async_trait]
-impl PacketWriter<ValidPacket> for ValidPacketIcebergWriter<'_> {
-    async fn write(&mut self, packet: ValidPacket) -> Result<(), file_store::Error> {
-        if self.enabled {
-            // The proto → IotValidPacket conversion only fails on out-of-range
-            // timestamps, which would also fail downstream. Emit a single
-            // warning and keep the proto write going.
-            match IotValidPacket::try_from(packet.clone()) {
-                Ok(record) => self.iceberg_buffer.push(valid_packet::from_record(record)),
-                Err(e) => tracing::warn!(error = %e, "skipping iceberg row for invalid packet"),
-            }
-        }
-        // Forwards to the existing `PacketWriter for FileSinkClient` impl,
-        // which internally calls the inherent `FileSinkClient::write` with an
-        // empty metadata array.
-        self.inner.write(packet).await?;
-        Ok(())
-    }
-}
 
 pub type SharedCachedOrgClient<T> = Arc<Mutex<CachedOrgClient<T>>>;
 
