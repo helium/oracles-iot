@@ -10,7 +10,7 @@ pub use gateway_reward::IcebergIotGatewayReward;
 pub use operational_reward::IcebergIotOperationalReward;
 pub use unallocated_reward::IcebergIotUnallocatedReward;
 
-pub const NAMESPACE: &str = "rewards";
+pub const NAMESPACE: &str = "iot";
 
 pub type GatewayRewardWriter = BoxedDataWriter<IcebergIotGatewayReward>;
 pub type OperationalRewardWriter = BoxedDataWriter<IcebergIotOperationalReward>;
