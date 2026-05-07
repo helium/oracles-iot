@@ -64,4 +64,5 @@ tls-init = { workspace = true }
 
 [dev-dependencies]
 helium-iceberg = { workspace = true, features = ["test-harness"] }
+tempfile = { workspace = true }
 trino-rust-client = "0.9"

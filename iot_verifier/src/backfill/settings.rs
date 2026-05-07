@@ -1,6 +1,6 @@
 use config::{Config, Environment, File};
 use serde::Deserialize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Settings {
@@ -15,6 +15,13 @@ pub struct Settings {
 
     pub database: db_store::Settings,
 
+    /// Folder for local cache of backfill state, including the iceberg
+    /// `BatchedWriter` spool. Persisted between runs so any pending
+    /// (un-committed) records survive a restart and are replayed on
+    /// startup.
+    #[serde(default = "default_cache")]
+    pub cache: PathBuf,
+
     /// Iceberg connection settings (REST catalog, S3, auth). Required by the
     /// `backfill-rewards` and `backfill-burns` subcommands; optional for
     /// `server`.
@@ -24,6 +31,10 @@ pub struct Settings {
 
 fn default_log() -> String {
     "iot_verifier=debug".to_string()
+}
+
+fn default_cache() -> PathBuf {
+    PathBuf::from("/var/data/iot-verifier-backfill")
 }
 
 impl Settings {

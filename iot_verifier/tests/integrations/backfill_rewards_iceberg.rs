@@ -2,20 +2,21 @@ use chrono::{Duration, Utc};
 use file_store::aws_local::AwsLocal;
 use file_store_oracles::FileType;
 use helium_crypto::PublicKeyBinary;
-use helium_iceberg::{BoxedDataWriter, IcebergTestHarness, IntoBoxedDataWriter};
+use helium_iceberg::{BatchedWriter, BatchedWriterConfig, IcebergTable, IcebergTestHarness};
 use helium_proto::services::poc_lora::{IotRewardShare, UnallocatedRewardType};
 use iot_verifier::iceberg::{
-    self, gateway_reward, operational_reward, unallocated_reward, IcebergIotGatewayReward,
+    gateway_reward, operational_reward, unallocated_reward, IcebergIotGatewayReward,
     IcebergIotOperationalReward, IcebergIotUnallocatedReward,
 };
 use iot_verifier::{
     backfill::{
-        rewards::{IotRewardRow, IotRewardsBackfiller, IotRewardsFanoutWriter},
+        rewards::{IotRewardsBackfiller, IotRewardsFanoutWriter},
         BackfillOptions,
     },
     iceberg::NAMESPACE,
 };
 use sqlx::PgPool;
+use tempfile::TempDir;
 use trino_rust_client::Trino;
 
 /// `Trino::get_all` returns `EmptyData` rather than an empty vec when a query
@@ -72,7 +73,7 @@ struct UnallocatedRewardRow {
 #[sqlx::test]
 async fn backfill_writes_all_three_reward_variants(pool: PgPool) -> anyhow::Result<()> {
     let harness = setup_iceberg().await?;
-    let writer = fanout_writer(&harness).await?;
+    let (writer, tasks, _spools) = fanout_writer(&harness).await?;
 
     let awsl = AwsLocal::new().await;
     awsl.create_bucket().await?;
@@ -112,7 +113,9 @@ async fn backfill_writes_all_three_reward_variants(pool: PgPool) -> anyhow::Resu
     .await?;
 
     let opts = test_backfill_options("rewards-backfill-all-variants", start_time, end_time);
-    run_backfill(pool, awsl.bucket_client(), writer, opts).await?;
+    run_backfill(pool, awsl.bucket_client(), writer.clone(), opts).await?;
+    writer.flush_all().await?;
+    tasks.abort_all();
 
     let gateways: Vec<GatewayRewardRow> = get_all_or_empty(
         harness.trino(),
@@ -157,7 +160,7 @@ async fn backfill_writes_all_three_reward_variants(pool: PgPool) -> anyhow::Resu
 #[sqlx::test]
 async fn backfill_skips_files_after_stop_after(pool: PgPool) -> anyhow::Result<()> {
     let harness = setup_iceberg().await?;
-    let writer = fanout_writer(&harness).await?;
+    let (writer, tasks, _spools) = fanout_writer(&harness).await?;
 
     let awsl = AwsLocal::new().await;
     awsl.create_bucket().await?;
@@ -186,7 +189,9 @@ async fn backfill_skips_files_after_stop_after(pool: PgPool) -> anyhow::Result<(
     .await?;
 
     let opts = test_backfill_options("rewards-backfill-stop-after", start_time, stop_time);
-    run_backfill(pool, awsl.bucket_client(), writer, opts).await?;
+    run_backfill(pool, awsl.bucket_client(), writer.clone(), opts).await?;
+    writer.flush_all().await?;
+    tasks.abort_all();
 
     let gateways: Vec<GatewayRewardRow> = get_all_or_empty(
         harness.trino(),
@@ -204,53 +209,10 @@ async fn backfill_skips_files_after_stop_after(pool: PgPool) -> anyhow::Result<(
     Ok(())
 }
 
-/// The writer's `helium.write_id` snapshot property is what keeps re-runs over
-/// the same source files from duplicating rows in iceberg. Test that directly
-/// (the backfiller's own file-state tracking would already short-circuit a
-/// double-run before reaching the writer).
-#[tokio::test]
-async fn fanout_writer_is_idempotent_on_same_id() -> anyhow::Result<()> {
-    let harness = setup_iceberg().await?;
-    let writer = fanout_writer(&harness).await?;
-
-    let pubkey: PublicKeyBinary = "112NqN2WWMwtK29PMzRby62fDydBJfsCLkCAf392stdok48ovNT6".parse()?;
-    let base = Utc::now() - Duration::hours(1);
-    let start_period = base.timestamp() as u64;
-    let end_period = (base + Duration::hours(1)).timestamp() as u64;
-
-    let row = IotRewardRow::Gateway(gateway_reward::from_proto(
-        helium_proto::services::poc_lora::GatewayReward {
-            hotspot_key: pubkey.as_ref().to_vec(),
-            beacon_amount: 42,
-            witness_amount: 42,
-            dc_transfer_amount: 42,
-        },
-        start_period,
-        end_period,
-    )?);
-
-    let write_id = "rewards/file-key-abc.gz";
-    writer.write_idempotent(write_id, vec![row.clone()]).await?;
-    writer.write_idempotent(write_id, vec![row]).await?;
-
-    let gateways: Vec<GatewayRewardRow> = get_all_or_empty(
-        harness.trino(),
-        format!("SELECT * FROM {}.{}", NAMESPACE, gateway_reward::TABLE_NAME),
-    )
-    .await?;
-    assert_eq!(
-        gateways.len(),
-        1,
-        "second write with same id should be a no-op"
-    );
-
-    Ok(())
-}
-
 #[sqlx::test]
 async fn backfill_skips_records_with_empty_oneof(pool: PgPool) -> anyhow::Result<()> {
     let harness = setup_iceberg().await?;
-    let writer = fanout_writer(&harness).await?;
+    let (writer, tasks, _spools) = fanout_writer(&harness).await?;
 
     let awsl = AwsLocal::new().await;
     awsl.create_bucket().await?;
@@ -278,7 +240,9 @@ async fn backfill_skips_records_with_empty_oneof(pool: PgPool) -> anyhow::Result
     .map_err(|e| anyhow::anyhow!("put proto: {e}"))?;
 
     let opts = test_backfill_options("rewards-backfill-skip-empty", start_time, end_time);
-    run_backfill(pool, awsl.bucket_client(), writer, opts).await?;
+    run_backfill(pool, awsl.bucket_client(), writer.clone(), opts).await?;
+    writer.flush_all().await?;
+    tasks.abort_all();
 
     let gateways: Vec<GatewayRewardRow> = get_all_or_empty(
         harness.trino(),
@@ -302,24 +266,60 @@ async fn backfill_skips_records_with_empty_oneof(pool: PgPool) -> anyhow::Result
     Ok(())
 }
 
+/// Build an `IotRewardsFanoutWriter` over the harness's three reward tables.
+/// Each inner `BatchedWriter` gets its own per-test `TempDir` spool, returned
+/// here so the directories aren't reaped before the tasks exit.
 async fn fanout_writer(
     harness: &IcebergTestHarness,
-) -> anyhow::Result<BoxedDataWriter<IotRewardRow>> {
-    let gateway = harness
-        .get_table_writer::<IcebergIotGatewayReward>(gateway_reward::TABLE_NAME)
-        .await?;
-    let operational = harness
-        .get_table_writer::<IcebergIotOperationalReward>(operational_reward::TABLE_NAME)
-        .await?;
-    let unallocated = harness
-        .get_table_writer::<IcebergIotUnallocatedReward>(unallocated_reward::TABLE_NAME)
-        .await?;
-    Ok(IotRewardsFanoutWriter::new(iceberg::RewardWriters {
-        gateway,
-        operational,
-        unallocated,
-    })
-    .boxed())
+) -> anyhow::Result<(IotRewardsFanoutWriter, FanoutTaskHandles, [TempDir; 3])> {
+    let catalog = harness.iceberg_catalog().clone();
+
+    let gateway_table: IcebergTable<IcebergIotGatewayReward> =
+        IcebergTable::from_catalog(catalog.clone(), NAMESPACE, gateway_reward::TABLE_NAME).await?;
+    let operational_table: IcebergTable<IcebergIotOperationalReward> =
+        IcebergTable::from_catalog(catalog.clone(), NAMESPACE, operational_reward::TABLE_NAME)
+            .await?;
+    let unallocated_table: IcebergTable<IcebergIotUnallocatedReward> =
+        IcebergTable::from_catalog(catalog, NAMESPACE, unallocated_reward::TABLE_NAME).await?;
+
+    let g_spool = TempDir::new()?;
+    let o_spool = TempDir::new()?;
+    let u_spool = TempDir::new()?;
+
+    let (gateway, g_task) =
+        BatchedWriter::new(gateway_table, BatchedWriterConfig::new(g_spool.path()));
+    let (operational, o_task) =
+        BatchedWriter::new(operational_table, BatchedWriterConfig::new(o_spool.path()));
+    let (unallocated, u_task) =
+        BatchedWriter::new(unallocated_table, BatchedWriterConfig::new(u_spool.path()));
+
+    let writer = IotRewardsFanoutWriter::from_writers(gateway, operational, unallocated);
+
+    let (_trigger, listener) = triggered::trigger();
+    let g_join = tokio::spawn(g_task.run(listener.clone()));
+    let o_join = tokio::spawn(o_task.run(listener.clone()));
+    let u_join = tokio::spawn(u_task.run(listener));
+    let tasks = FanoutTaskHandles {
+        gateway: g_join,
+        operational: o_join,
+        unallocated: u_join,
+    };
+
+    Ok((writer, tasks, [g_spool, o_spool, u_spool]))
+}
+
+struct FanoutTaskHandles {
+    gateway: tokio::task::JoinHandle<helium_iceberg::Result<()>>,
+    operational: tokio::task::JoinHandle<helium_iceberg::Result<()>>,
+    unallocated: tokio::task::JoinHandle<helium_iceberg::Result<()>>,
+}
+
+impl FanoutTaskHandles {
+    fn abort_all(self) {
+        self.gateway.abort();
+        self.operational.abort();
+        self.unallocated.abort();
+    }
 }
 
 async fn put_share_at(
@@ -336,7 +336,7 @@ async fn put_share_at(
 async fn run_backfill(
     pool: PgPool,
     bucket: file_store::BucketClient,
-    writer: BoxedDataWriter<IotRewardRow>,
+    writer: IotRewardsFanoutWriter,
     opts: BackfillOptions,
 ) -> anyhow::Result<()> {
     let (backfiller, server) =

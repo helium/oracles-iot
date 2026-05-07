@@ -1,14 +1,10 @@
-use crate::{
-    backfill::{
-        rewards::{IotRewardsBackfiller, IotRewardsFanoutWriter},
-        settings::Settings,
-        BackfillOptions,
-    },
-    iceberg::RewardWriters,
+use crate::backfill::{
+    rewards::{IotRewardsBackfiller, IotRewardsFanoutWriter},
+    settings::Settings,
+    BackfillOptions,
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use helium_iceberg::IntoBoxedDataWriter;
 use task_manager::TaskManager;
 
 #[derive(Debug, clap::Args)]
@@ -43,8 +39,9 @@ impl Cmd {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("iceberg_settings required for rewards backfill"))?;
 
-        let writers = RewardWriters::from_settings(iceberg_settings).await?;
-        let writer = IotRewardsFanoutWriter::new(writers).boxed();
+        let spool_root = settings.cache.join("iceberg-spool-backfill/rewards");
+        let (writer, tasks) =
+            IotRewardsFanoutWriter::from_settings(iceberg_settings, &spool_root).await?;
 
         tracing::info!(
             process_name = %self.process_name,
@@ -72,6 +69,9 @@ impl Cmd {
         TaskManager::builder()
             .add_task(server)
             .add_task(backfiller)
+            .add_task(tasks.gateway)
+            .add_task(tasks.operational)
+            .add_task(tasks.unallocated)
             .build()
             .start()
             .await?;

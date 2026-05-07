@@ -1,14 +1,16 @@
-use crate::backfill::{Backfiller, IcebergBackfill};
+use crate::backfill::{BackfillWriter, Backfiller, IcebergBackfill};
 use crate::iceberg::{
     self, gateway_reward, operational_reward, unallocated_reward, IcebergIotGatewayReward,
     IcebergIotOperationalReward, IcebergIotUnallocatedReward,
 };
+use anyhow::Context;
 use async_trait::async_trait;
 use file_store::traits::MsgDecode;
 use file_store_oracles::FileType;
-use helium_iceberg::{BoxedDataWriter, DataWriter};
+use helium_iceberg::{BatchedWriter, BatchedWriterConfig, BatchedWriterTask, IcebergTable};
 use helium_proto::services::poc_lora::{iot_reward_share::Reward as IotReward, IotRewardShare};
 use serde::Serialize;
+use std::path::Path;
 
 /// Wrapper around `IotRewardShare` so we can implement `MsgDecode` (orphan rules
 /// prevent us from impl'ing it on the proto type directly). The wrapped record
@@ -28,9 +30,8 @@ impl MsgDecode for IotRewardShareRecord {
 
 /// Fan-out row produced by [`IotRewardConverter`]. The `Backfiller` collects a
 /// `Vec<IotRewardRow>` per source S3 file and hands it to
-/// [`IotRewardsFanoutWriter`], which partitions by variant and writes each
-/// table independently with the same `helium.write_id` (the source file key)
-/// so re-runs over the same window remain idempotent.
+/// [`IotRewardsFanoutWriter`], which partitions by variant and queues each
+/// table independently into its own `BatchedWriter`.
 #[derive(Debug, Clone, Serialize)]
 pub enum IotRewardRow {
     Gateway(IcebergIotGatewayReward),
@@ -63,21 +64,107 @@ impl IcebergBackfill for IotRewardConverter {
     }
 }
 
-pub type IotRewardsBackfiller = Backfiller<IotRewardConverter>;
+pub type IotRewardsBackfiller = Backfiller<IotRewardConverter, IotRewardsFanoutWriter>;
 
+/// One `BatchedWriter` handle per reward iceberg table. Cloneable — each
+/// inner `BatchedWriter<T>` is just a cloneable `mpsc::Sender`.
+#[derive(Clone)]
 pub struct IotRewardsFanoutWriter {
-    gateway: BoxedDataWriter<IcebergIotGatewayReward>,
-    operational: BoxedDataWriter<IcebergIotOperationalReward>,
-    unallocated: BoxedDataWriter<IcebergIotUnallocatedReward>,
+    gateway: BatchedWriter<IcebergIotGatewayReward>,
+    operational: BatchedWriter<IcebergIotOperationalReward>,
+    unallocated: BatchedWriter<IcebergIotUnallocatedReward>,
+}
+
+/// The three `BatchedWriterTask`s that drain the fanout's spools and commit
+/// to iceberg. Returned alongside [`IotRewardsFanoutWriter::from_settings`]
+/// so the caller can register them with `TaskManager`.
+pub struct IotRewardsFanoutTasks {
+    pub gateway: BatchedWriterTask<IcebergIotGatewayReward>,
+    pub operational: BatchedWriterTask<IcebergIotOperationalReward>,
+    pub unallocated: BatchedWriterTask<IcebergIotUnallocatedReward>,
 }
 
 impl IotRewardsFanoutWriter {
-    pub fn new(writers: iceberg::RewardWriters) -> Self {
+    /// Connect to the iceberg catalog, ensure the rewards namespace and
+    /// tables exist, then build a `BatchedWriter` over each table. Each
+    /// writer's spool lives under `<spool_root>/<table_name>` so the three
+    /// tables don't share a single spool file.
+    pub async fn from_settings(
+        iceberg_settings: &helium_iceberg::Settings,
+        spool_root: &Path,
+    ) -> anyhow::Result<(Self, IotRewardsFanoutTasks)> {
+        tracing::info!("connecting to iceberg catalog for iot rewards backfill");
+        let catalog = iceberg_settings
+            .connect()
+            .await
+            .context("connecting to catalog")?;
+        catalog
+            .create_namespace_if_not_exists(iceberg::NAMESPACE)
+            .await
+            .context("creating rewards namespace")?;
+
+        let gateway_table: IcebergTable<IcebergIotGatewayReward> = catalog
+            .create_table_if_not_exists(gateway_reward::table_definition()?)
+            .await
+            .context("creating iot_gateway_rewards table")?;
+        let operational_table: IcebergTable<IcebergIotOperationalReward> = catalog
+            .create_table_if_not_exists(operational_reward::table_definition()?)
+            .await
+            .context("creating iot_operational_rewards table")?;
+        let unallocated_table: IcebergTable<IcebergIotUnallocatedReward> = catalog
+            .create_table_if_not_exists(unallocated_reward::table_definition()?)
+            .await
+            .context("creating iot_unallocated_rewards table")?;
+
+        let (gateway, gateway_task) = BatchedWriter::new(
+            gateway_table,
+            BatchedWriterConfig::new(spool_root.join(gateway_reward::TABLE_NAME)),
+        );
+        let (operational, operational_task) = BatchedWriter::new(
+            operational_table,
+            BatchedWriterConfig::new(spool_root.join(operational_reward::TABLE_NAME)),
+        );
+        let (unallocated, unallocated_task) = BatchedWriter::new(
+            unallocated_table,
+            BatchedWriterConfig::new(spool_root.join(unallocated_reward::TABLE_NAME)),
+        );
+
+        Ok((
+            Self {
+                gateway,
+                operational,
+                unallocated,
+            },
+            IotRewardsFanoutTasks {
+                gateway: gateway_task,
+                operational: operational_task,
+                unallocated: unallocated_task,
+            },
+        ))
+    }
+
+    /// Construct directly from already-built `BatchedWriter` handles. Used
+    /// by tests that wire up the writers against the test harness.
+    pub fn from_writers(
+        gateway: BatchedWriter<IcebergIotGatewayReward>,
+        operational: BatchedWriter<IcebergIotOperationalReward>,
+        unallocated: BatchedWriter<IcebergIotUnallocatedReward>,
+    ) -> Self {
         Self {
-            gateway: writers.gateway,
-            operational: writers.operational,
-            unallocated: writers.unallocated,
+            gateway,
+            operational,
+            unallocated,
         }
+    }
+
+    /// Force an iceberg commit for all three tables. Used by tests to make
+    /// rows queryable via Trino without having to wait for the size/time
+    /// thresholds to fire.
+    pub async fn flush_all(&self) -> helium_iceberg::Result<()> {
+        self.gateway.flush().await?;
+        self.operational.flush().await?;
+        self.unallocated.flush().await?;
+        Ok(())
     }
 
     fn partition(
@@ -102,33 +189,27 @@ impl IotRewardsFanoutWriter {
 }
 
 #[async_trait]
-impl DataWriter<IotRewardRow> for IotRewardsFanoutWriter {
-    async fn write(&self, records: Vec<IotRewardRow>) -> helium_iceberg::Result {
+impl BackfillWriter<IotRewardRow> for IotRewardsFanoutWriter {
+    async fn queue_all(&self, records: Vec<IotRewardRow>) -> anyhow::Result<()> {
         let (gateway, operational, unallocated) = Self::partition(records);
         if !gateway.is_empty() {
-            self.gateway.write(gateway).await?;
+            self.gateway
+                .queue_all(gateway)
+                .await
+                .context("queueing iot_gateway_rewards rows")?;
         }
         if !operational.is_empty() {
-            self.operational.write(operational).await?;
+            self.operational
+                .queue_all(operational)
+                .await
+                .context("queueing iot_operational_rewards rows")?;
         }
         if !unallocated.is_empty() {
-            self.unallocated.write(unallocated).await?;
+            self.unallocated
+                .queue_all(unallocated)
+                .await
+                .context("queueing iot_unallocated_rewards rows")?;
         }
-        Ok(())
-    }
-
-    async fn write_idempotent(
-        &self,
-        id: &str,
-        records: Vec<IotRewardRow>,
-    ) -> helium_iceberg::Result {
-        let (gateway, operational, unallocated) = Self::partition(records);
-        // Always call write_idempotent on every table so that re-runs over a
-        // window with empty variants still record the write_id (otherwise a
-        // subsequent run could append empty rows from the same file again).
-        self.gateway.write_idempotent(id, gateway).await?;
-        self.operational.write_idempotent(id, operational).await?;
-        self.unallocated.write_idempotent(id, unallocated).await?;
         Ok(())
     }
 }
@@ -136,6 +217,7 @@ impl DataWriter<IotRewardRow> for IotRewardsFanoutWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{DateTime, FixedOffset, TimeZone, Utc};
     use helium_proto::services::poc_lora::{
         GatewayReward, OperationalReward, UnallocatedReward, UnallocatedRewardType,
     };
@@ -193,8 +275,6 @@ mod tests {
 
     #[test]
     fn partition_buckets() {
-        use chrono::{DateTime, FixedOffset, TimeZone, Utc};
-
         fn epoch() -> DateTime<FixedOffset> {
             Utc.timestamp_opt(0, 0)
                 .single()

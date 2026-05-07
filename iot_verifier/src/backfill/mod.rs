@@ -1,4 +1,5 @@
 use anyhow::Context;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use file_store::{
     file_info::FileInfo, file_info_poller::FileInfoStream, file_source, traits::MsgDecode,
@@ -6,7 +7,6 @@ use file_store::{
 };
 use file_store_oracles::FileType;
 use futures::StreamExt;
-use helium_iceberg::BoxedDataWriter;
 use sqlx::PgPool;
 use std::time::Duration;
 use task_manager::ManagedTask;
@@ -23,6 +23,14 @@ pub trait IcebergBackfill: Send + 'static {
 
     /// Return `Some(row)` to write the record, `None` to skip it.
     fn convert(record: Self::FileRecord) -> Option<Self::IcebergRow>;
+}
+
+/// Per-file iceberg sink used by [`Backfiller`]. Implemented by single-table
+/// `BatchedWriter<T>` wrappers and by the multi-table fan-out in
+/// `rewards::IotRewardsFanoutWriter`.
+#[async_trait]
+pub trait BackfillWriter<T>: Send + Sync + 'static {
+    async fn queue_all(&self, rows: Vec<T>) -> anyhow::Result<()>;
 }
 
 pub struct BackfillOptions {
@@ -54,18 +62,18 @@ impl ManagedTask for BackfillPollerServer {
     }
 }
 
-pub struct Backfiller<C: IcebergBackfill> {
+pub struct Backfiller<C: IcebergBackfill, W: BackfillWriter<C::IcebergRow>> {
     pool: PgPool,
     reports: Receiver<FileInfoStream<C::FileRecord>>,
-    writer: Option<BoxedDataWriter<C::IcebergRow>>,
+    writer: Option<W>,
     done: bool,
 }
 
-impl<C: IcebergBackfill> Backfiller<C> {
+impl<C: IcebergBackfill, W: BackfillWriter<C::IcebergRow>> Backfiller<C, W> {
     pub fn new(
         pool: PgPool,
         reports: Receiver<FileInfoStream<C::FileRecord>>,
-        writer: Option<BoxedDataWriter<C::IcebergRow>>,
+        writer: Option<W>,
     ) -> Self {
         let done = writer.is_none();
         Self {
@@ -108,7 +116,6 @@ impl<C: IcebergBackfill> Backfiller<C> {
         };
 
         let file_info = file.file_info.clone();
-        let write_id = file_info.key.clone();
         let mut txn = self.pool.begin().await?;
 
         let all: Vec<_> = file.into_stream(&mut txn).await?.collect().await;
@@ -118,9 +125,9 @@ impl<C: IcebergBackfill> Backfiller<C> {
         let written = rows.len();
 
         writer
-            .write_idempotent(&write_id, rows)
+            .queue_all(rows)
             .await
-            .with_context(|| format!("writing {} backfill to iceberg", C::FILE_TYPE))?;
+            .with_context(|| format!("queueing {} backfill to iceberg", C::FILE_TYPE))?;
 
         txn.commit().await?;
         tracing::info!(
@@ -158,7 +165,7 @@ impl<C: IcebergBackfill> Backfiller<C> {
 // `create` needs extra bounds because `file_source::continuous_source()` uses
 // `MsgDecodeFileInfoPollerParser`, which requires the error type to be `std::error::Error`
 // and the proto message type to implement `prost::Message + Default`.
-impl<C: IcebergBackfill> Backfiller<C>
+impl<C: IcebergBackfill, W: BackfillWriter<C::IcebergRow>> Backfiller<C, W>
 where
     <C::FileRecord as TryFrom<<C::FileRecord as MsgDecode>::Msg>>::Error: std::error::Error,
     <C::FileRecord as MsgDecode>::Msg: prost::Message + Default,
@@ -166,7 +173,7 @@ where
     pub async fn create(
         pool: PgPool,
         bucket_client: BucketClient,
-        writer: Option<BoxedDataWriter<C::IcebergRow>>,
+        writer: Option<W>,
         options: Option<BackfillOptions>,
     ) -> anyhow::Result<(Self, BackfillPollerServer)> {
         let (Some(writer), Some(options)) = (writer, options) else {
@@ -196,7 +203,7 @@ where
     }
 }
 
-impl<C: IcebergBackfill> ManagedTask for Backfiller<C> {
+impl<C: IcebergBackfill, W: BackfillWriter<C::IcebergRow>> ManagedTask for Backfiller<C, W> {
     fn start_task(self: Box<Self>, shutdown: triggered::Listener) -> task_manager::TaskFuture {
         task_manager::spawn(self.run(shutdown))
     }
