@@ -6,7 +6,7 @@ use file_store::{
 };
 use file_store_oracles::FileType;
 use futures::StreamExt;
-use helium_iceberg::BoxedDataWriter;
+use helium_iceberg::BatchedWriter;
 use sqlx::PgPool;
 use std::time::Duration;
 use task_manager::ManagedTask;
@@ -57,7 +57,7 @@ impl ManagedTask for BackfillPollerServer {
 pub struct Backfiller<C: IcebergBackfill> {
     pool: PgPool,
     reports: Receiver<FileInfoStream<C::FileRecord>>,
-    writer: Option<BoxedDataWriter<C::IcebergRow>>,
+    writer: Option<BatchedWriter<C::IcebergRow>>,
     done: bool,
 }
 
@@ -65,7 +65,7 @@ impl<C: IcebergBackfill> Backfiller<C> {
     pub fn new(
         pool: PgPool,
         reports: Receiver<FileInfoStream<C::FileRecord>>,
-        writer: Option<BoxedDataWriter<C::IcebergRow>>,
+        writer: Option<BatchedWriter<C::IcebergRow>>,
     ) -> Self {
         let done = writer.is_none();
         Self {
@@ -108,7 +108,6 @@ impl<C: IcebergBackfill> Backfiller<C> {
         };
 
         let file_info = file.file_info.clone();
-        let write_id = file_info.key.clone();
         let mut txn = self.pool.begin().await?;
 
         let all: Vec<_> = file.into_stream(&mut txn).await?.collect().await;
@@ -118,9 +117,9 @@ impl<C: IcebergBackfill> Backfiller<C> {
         let written = rows.len();
 
         writer
-            .write_idempotent(&write_id, rows)
+            .queue_all(rows)
             .await
-            .with_context(|| format!("writing {} backfill to iceberg", C::FILE_TYPE))?;
+            .with_context(|| format!("queueing {} backfill to iceberg", C::FILE_TYPE))?;
 
         txn.commit().await?;
         tracing::info!(
@@ -166,7 +165,7 @@ where
     pub async fn create(
         pool: PgPool,
         bucket_client: BucketClient,
-        writer: Option<BoxedDataWriter<C::IcebergRow>>,
+        writer: Option<BatchedWriter<C::IcebergRow>>,
         options: Option<BackfillOptions>,
     ) -> anyhow::Result<(Self, BackfillPollerServer)> {
         let (Some(writer), Some(options)) = (writer, options) else {

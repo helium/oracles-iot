@@ -3,7 +3,7 @@ use anyhow::Context;
 use chrono::{DateTime, FixedOffset, TimeZone};
 use file_store::file_sink::FileSinkClient;
 use file_store_oracles::iot_packet::IotValidPacket;
-use helium_iceberg::{BoxedDataWriter, IntoBoxedDataWriter};
+use helium_iceberg::IcebergTable;
 use helium_proto::services::packet_verifier::ValidPacket;
 use tonic::async_trait;
 pub use valid_packet::IcebergIotValidPacket;
@@ -12,29 +12,23 @@ pub mod valid_packet;
 
 pub const NAMESPACE: &str = "iot";
 
-pub type ValidPacketWriter = BoxedDataWriter<IcebergIotValidPacket>;
-
-pub struct ValidPacketWriters {
-    pub valid_packet: ValidPacketWriter,
-}
-
-impl ValidPacketWriters {
-    pub async fn from_settings(settings: &helium_iceberg::Settings) -> anyhow::Result<Self> {
-        tracing::info!("connecting to iceberg catalog for iot valid packet backfill");
-        let catalog = settings.connect().await.context("connecting to catalog")?;
-        catalog
-            .create_namespace_if_not_exists(NAMESPACE)
-            .await
-            .context("creating iot namespace")?;
-
-        let valid_packet = catalog
-            .create_table_if_not_exists(valid_packet::table_definition()?)
-            .await
-            .context("creating iot_valid_packets table")?
-            .boxed();
-
-        Ok(Self { valid_packet })
-    }
+/// Connect to the iceberg catalog, ensure the `iot` namespace and the
+/// `valid_packets` table exist, and return a typed `IcebergTable` that the
+/// caller can wrap in a `BatchedWriter`. Used by both the daemon and the
+/// backfill CLI so they share one place to do catalog/namespace setup.
+pub async fn open_valid_packets_table(
+    settings: &helium_iceberg::Settings,
+) -> anyhow::Result<IcebergTable<IcebergIotValidPacket>> {
+    tracing::info!("connecting to iceberg catalog for iot valid_packets");
+    let catalog = settings.connect().await.context("connecting to catalog")?;
+    catalog
+        .create_namespace_if_not_exists(NAMESPACE)
+        .await
+        .context("creating iot namespace")?;
+    catalog
+        .create_table_if_not_exists(valid_packet::table_definition()?)
+        .await
+        .context("creating iot_valid_packets table")
 }
 
 /// Wraps `ValidPacket` file sink so that every emitted packet is

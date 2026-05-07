@@ -1,9 +1,10 @@
 use crate::{
     backfill::{settings::Settings, valid_packets::IotValidPacketsBackfiller, BackfillOptions},
-    iceberg::ValidPacketWriters,
+    iceberg,
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use helium_iceberg::{BatchedWriter, BatchedWriterConfig};
 use task_manager::TaskManager;
 
 #[derive(Debug, clap::Args)]
@@ -37,9 +38,9 @@ impl Cmd {
             anyhow::anyhow!("iceberg_settings required for valid packets backfill")
         })?;
 
-        let writer = ValidPacketWriters::from_settings(iceberg_settings)
-            .await?
-            .valid_packet;
+        let table = iceberg::open_valid_packets_table(iceberg_settings).await?;
+        let spool_dir = settings.cache.join("iceberg-spool-backfill/valid_packets");
+        let (writer, batched_task) = BatchedWriter::new(table, BatchedWriterConfig::new(spool_dir));
 
         tracing::info!(
             process_name = %self.process_name,
@@ -67,6 +68,7 @@ impl Cmd {
         TaskManager::builder()
             .add_task(server)
             .add_task(backfiller)
+            .add_task(batched_task)
             .build()
             .start()
             .await?;

@@ -2,13 +2,16 @@ use chrono::{Duration, Utc};
 use file_store::aws_local::AwsLocal;
 use file_store_oracles::FileType;
 use helium_crypto::PublicKeyBinary;
-use helium_iceberg::{BoxedDataWriter, IcebergTestHarness};
+use helium_iceberg::{
+    BatchedWriter, BatchedWriterConfig, BatchedWriterTask, IcebergTable, IcebergTestHarness,
+};
 use helium_proto::services::packet_verifier::ValidPacket;
 use iot_packet_verifier::{
     backfill::{valid_packets::IotValidPacketsBackfiller, BackfillOptions},
     iceberg::{valid_packet, IcebergIotValidPacket, NAMESPACE},
 };
 use sqlx::PgPool;
+use tempfile::TempDir;
 use trino_rust_client::Trino;
 
 const TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
@@ -25,7 +28,7 @@ struct ValidPacketRow {
 #[sqlx::test]
 async fn backfill_writes_valid_packets(pool: PgPool) -> anyhow::Result<()> {
     let harness = setup_iceberg().await?;
-    let writer = writer(&harness).await?;
+    let (writer, batched_task, _spool) = batched_writer(&harness).await?;
 
     let awsl = AwsLocal::new().await;
     awsl.create_bucket().await?;
@@ -47,7 +50,10 @@ async fn backfill_writes_valid_packets(pool: PgPool) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("put proto: {e}"))?;
 
     let opts = test_backfill_options("valid-packets-backfill-basic", start_time, end_time);
-    run_backfill(pool, awsl.bucket_client(), writer, opts).await?;
+    run_backfill(pool, awsl.bucket_client(), writer.clone(), opts).await?;
+    writer.flush().await?;
+    drop(writer);
+    batched_task.await??;
 
     let mut rows: Vec<ValidPacketRow> = get_all_or_empty(
         harness.trino(),
@@ -74,7 +80,7 @@ async fn backfill_writes_valid_packets(pool: PgPool) -> anyhow::Result<()> {
 #[sqlx::test]
 async fn backfill_skips_files_after_stop_after(pool: PgPool) -> anyhow::Result<()> {
     let harness = setup_iceberg().await?;
-    let writer = writer(&harness).await?;
+    let (writer, batched_task, _spool) = batched_writer(&harness).await?;
 
     let awsl = AwsLocal::new().await;
     awsl.create_bucket().await?;
@@ -110,7 +116,10 @@ async fn backfill_skips_files_after_stop_after(pool: PgPool) -> anyhow::Result<(
     .map_err(|e| anyhow::anyhow!("put proto: {e}"))?;
 
     let opts = test_backfill_options("valid-packets-backfill-stop-after", start_time, stop_time);
-    run_backfill(pool, awsl.bucket_client(), writer, opts).await?;
+    run_backfill(pool, awsl.bucket_client(), writer.clone(), opts).await?;
+    writer.flush().await?;
+    drop(writer);
+    batched_task.await??;
 
     let rows: Vec<ValidPacketRow> = get_all_or_empty(
         harness.trino(),
@@ -125,34 +134,6 @@ async fn backfill_skips_files_after_stop_after(pool: PgPool) -> anyhow::Result<(
     assert_eq!(rows[0].num_dcs, 1);
 
     awsl.cleanup().await?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn writer_is_idempotent_on_same_id() -> anyhow::Result<()> {
-    let harness = setup_iceberg().await?;
-    let writer = writer(&harness).await?;
-
-    let pubkey: PublicKeyBinary = "112NqN2WWMwtK29PMzRby62fDydBJfsCLkCAf392stdok48ovNT6".parse()?;
-    let row = valid_packet::from_record(file_store_oracles::iot_packet::IotValidPacket {
-        payload_size: 24,
-        gateway: pubkey,
-        payload_hash: vec![1, 2, 3],
-        num_dcs: 7,
-        packet_timestamp: Utc::now() - Duration::hours(1),
-    });
-
-    let id = "valid-packets/file-key.gz";
-    writer.write_idempotent(id, vec![row.clone()]).await?;
-    writer.write_idempotent(id, vec![row]).await?;
-
-    let rows: Vec<ValidPacketRow> = get_all_or_empty(
-        harness.trino(),
-        format!("SELECT * FROM {}.{}", NAMESPACE, valid_packet::TABLE_NAME),
-    )
-    .await?;
-    assert_eq!(rows.len(), 1, "second write with same id should be a no-op");
-
     Ok(())
 }
 
@@ -175,12 +156,31 @@ async fn setup_iceberg() -> anyhow::Result<IcebergTestHarness> {
     Ok(harness)
 }
 
-async fn writer(
+/// Build a `BatchedWriter` over the harness's already-created
+/// `valid_packets` table. Returns the cloneable handle, a JoinHandle for the
+/// background task, and the spool `TempDir` (kept alive by the test so the
+/// directory isn't reaped before the task exits).
+async fn batched_writer(
     harness: &IcebergTestHarness,
-) -> anyhow::Result<BoxedDataWriter<IcebergIotValidPacket>> {
-    Ok(harness
-        .get_table_writer::<IcebergIotValidPacket>(valid_packet::TABLE_NAME)
-        .await?)
+) -> anyhow::Result<(
+    BatchedWriter<IcebergIotValidPacket>,
+    tokio::task::JoinHandle<helium_iceberg::Result<()>>,
+    TempDir,
+)> {
+    let table = IcebergTable::<IcebergIotValidPacket>::from_catalog(
+        harness.iceberg_catalog().clone(),
+        NAMESPACE,
+        valid_packet::TABLE_NAME,
+    )
+    .await?;
+
+    let spool = TempDir::new()?;
+    let (writer, task) = BatchedWriter::new(table, BatchedWriterConfig::new(spool.path()));
+    let task: BatchedWriterTask<IcebergIotValidPacket> = task;
+    let (_trigger, listener) = triggered::trigger();
+    let join = tokio::spawn(task.run(listener));
+
+    Ok((writer, join, spool))
 }
 
 fn test_backfill_options(
@@ -210,7 +210,7 @@ fn valid_packet_proto(gateway: &PublicKeyBinary, num_dcs: u32, ts_ms: u64) -> Va
 async fn run_backfill(
     pool: PgPool,
     bucket: file_store::BucketClient,
-    writer: BoxedDataWriter<IcebergIotValidPacket>,
+    writer: BatchedWriter<IcebergIotValidPacket>,
     opts: BackfillOptions,
 ) -> anyhow::Result<()> {
     let (backfiller, server) =

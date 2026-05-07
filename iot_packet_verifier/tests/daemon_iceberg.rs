@@ -12,7 +12,9 @@ use file_store::{
 };
 use file_store_oracles::iot_packet::PacketRouterPacketReport;
 use helium_crypto::PublicKeyBinary;
-use helium_iceberg::IcebergTestHarness;
+use helium_iceberg::{
+    BatchedWriter, BatchedWriterConfig, BatchedWriterTask, IcebergTable, IcebergTestHarness,
+};
 use helium_proto::{
     services::{
         packet_verifier::{InvalidPacket, ValidPacket},
@@ -23,19 +25,22 @@ use helium_proto::{
 use iot_packet_verifier::{
     balances::BalanceCache,
     daemon::Daemon,
-    iceberg::{self, valid_packet, IcebergIotValidPacket, ValidPacketWriter},
+    iceberg::{self, valid_packet, IcebergIotValidPacket},
     verifier::{ConfigServer, ConfigServerError, Org, Verifier},
 };
 use solana::burn::TestSolanaClientMap;
 use sqlx::PgPool;
 use std::{collections::HashMap, sync::Arc};
+use tempfile::TempDir;
 use tokio::sync::{mpsc, Mutex};
 use trino_rust_client::Trino;
+
+// ── Tests ────────────────────────────────────────────────────────────────────
 
 #[sqlx::test]
 async fn handle_file_writes_valid_packets_to_iceberg(pool: PgPool) -> anyhow::Result<()> {
     let harness = setup_iceberg().await?;
-    let writer = writer(&harness).await?;
+    let (writer, batched_task, _spool) = batched_writer(&harness).await?;
 
     let payer = PublicKeyBinary::from(vec![0]);
     let orgs = MockConfigServer::default();
@@ -45,11 +50,10 @@ async fn handle_file_writes_valid_packets_to_iceberg(pool: PgPool) -> anyhow::Re
     let balances = BalanceCache::new(&pool, solana).await?;
 
     let (mut daemon, valid_drainer, invalid_drainer) =
-        build_daemon(pool.clone(), balances, orgs, Some(writer)).await?;
+        build_daemon(pool.clone(), balances, orgs, Some(writer.clone())).await?;
 
-    let file_key = "iot_valid_packet/test-file-1.gz";
     let stream = report_file_stream(
-        file_key,
+        "iot_valid_packet/test-file-1.gz",
         vec![
             packet_report(0, 1_700_000_000_000, 24, vec![1], false),
             packet_report(0, 1_700_000_001_000, 48, vec![2], false),
@@ -59,6 +63,11 @@ async fn handle_file_writes_valid_packets_to_iceberg(pool: PgPool) -> anyhow::Re
 
     daemon.handle_file(stream).await?;
 
+    // Force the BatchedWriter to commit before we query Trino. The daemon
+    // still holds a clone of `writer`, so we don't try to drain the task —
+    // just abort it once the synchronous flush has returned.
+    writer.flush().await?;
+    batched_task.abort();
     valid_drainer.abort();
     invalid_drainer.abort();
 
@@ -88,7 +97,7 @@ async fn handle_file_drops_insufficient_balance_packets_from_iceberg(
     pool: PgPool,
 ) -> anyhow::Result<()> {
     let harness = setup_iceberg().await?;
-    let writer = writer(&harness).await?;
+    let (writer, batched_task, _spool) = batched_writer(&harness).await?;
 
     let payer = PublicKeyBinary::from(vec![0]);
     let orgs = MockConfigServer::default();
@@ -99,7 +108,7 @@ async fn handle_file_drops_insufficient_balance_packets_from_iceberg(
     let balances = BalanceCache::new(&pool, solana).await?;
 
     let (mut daemon, valid_drainer, invalid_drainer) =
-        build_daemon(pool.clone(), balances, orgs, Some(writer)).await?;
+        build_daemon(pool.clone(), balances, orgs, Some(writer.clone())).await?;
 
     let stream = report_file_stream(
         "iot_valid_packet/test-file-2.gz",
@@ -115,6 +124,11 @@ async fn handle_file_drops_insufficient_balance_packets_from_iceberg(
 
     daemon.handle_file(stream).await?;
 
+    // Force the BatchedWriter to commit before we query Trino. The daemon
+    // still holds a clone of `writer`, so we don't try to drain the task —
+    // just abort it once the synchronous flush has returned.
+    writer.flush().await?;
+    batched_task.abort();
     valid_drainer.abort();
     invalid_drainer.abort();
 
@@ -134,61 +148,6 @@ async fn handle_file_drops_insufficient_balance_packets_from_iceberg(
     Ok(())
 }
 
-#[sqlx::test]
-async fn handle_file_is_idempotent_per_file_key(pool: PgPool) -> anyhow::Result<()> {
-    let harness = setup_iceberg().await?;
-    let writer = writer(&harness).await?;
-
-    let payer = PublicKeyBinary::from(vec![0]);
-    let orgs = MockConfigServer::default();
-    orgs.insert(0_u64, payer.clone()).await;
-    let solana = TestSolanaClientMap::default();
-    solana.insert(&payer, 1_000).await;
-    let balances = BalanceCache::new(&pool, solana).await?;
-
-    let (mut daemon, valid_drainer, invalid_drainer) =
-        build_daemon(pool.clone(), balances, orgs, Some(writer)).await?;
-
-    let file_key = "iot_valid_packet/idempotent.gz";
-    daemon
-        .handle_file(report_file_stream(
-            file_key,
-            vec![packet_report(0, 1_700_000_000_000, 24, vec![0xab], false)],
-        ))
-        .await?;
-
-    // Second call with the same file_key should be a no-op at the iceberg
-    // layer. (The verifier itself will fail on the duplicate
-    // `INSERT INTO files_processed`, so we expect an error and ignore it —
-    // the iceberg state is what we care about.)
-    let _ = daemon
-        .handle_file(report_file_stream(
-            file_key,
-            vec![packet_report(0, 1_700_000_000_000, 24, vec![0xab], false)],
-        ))
-        .await;
-
-    valid_drainer.abort();
-    invalid_drainer.abort();
-
-    let rows: Vec<ValidPacketRow> = get_all_or_empty(
-        harness.trino(),
-        format!(
-            "SELECT * FROM {}.{}",
-            iceberg::NAMESPACE,
-            valid_packet::TABLE_NAME
-        ),
-    )
-    .await?;
-    assert_eq!(
-        rows.len(),
-        1,
-        "second handle_file with same file_key should be a no-op at iceberg"
-    );
-
-    Ok(())
-}
-
 // ── Daemon test rig ──────────────────────────────────────────────────────────
 
 /// Builds a `Daemon` wired for end-to-end testing: real iceberg writer from
@@ -199,7 +158,7 @@ async fn build_daemon(
     pool: PgPool,
     balances: BalanceCache<TestSolanaClientMap>,
     orgs: MockConfigServer,
-    iceberg_writer: Option<ValidPacketWriter>,
+    iceberg_writer: Option<BatchedWriter<IcebergIotValidPacket>>,
 ) -> anyhow::Result<(
     Daemon<BalanceCache<TestSolanaClientMap>, MockConfigServer>,
     tokio::task::JoinHandle<()>,
@@ -260,8 +219,8 @@ fn spawn_sink_drainer<T: Send + 'static>(
 }
 
 /// Wraps a `Vec<PacketRouterPacketReport>` in a `FileInfoStream` keyed on
-/// `file_key`. The key is what `Daemon::handle_file` passes to
-/// `write_idempotent`, so re-running the same key is a no-op at iceberg.
+/// `file_key`. The key is what `Daemon::handle_file` records into the
+/// `files_processed` table for source-level dedupe.
 fn report_file_stream(
     file_key: &str,
     reports: Vec<PacketRouterPacketReport>,
@@ -388,8 +347,30 @@ async fn setup_iceberg() -> anyhow::Result<IcebergTestHarness> {
     Ok(harness)
 }
 
-async fn writer(harness: &IcebergTestHarness) -> anyhow::Result<ValidPacketWriter> {
-    Ok(harness
-        .get_table_writer::<IcebergIotValidPacket>(valid_packet::TABLE_NAME)
-        .await?)
+/// Build a `BatchedWriter` over the harness's already-created
+/// `valid_packets` table. Returns the cloneable handle, a JoinHandle for the
+/// background task, and the spool `TempDir` (kept alive by the test so the
+/// directory isn't reaped before the task exits).
+async fn batched_writer(
+    harness: &IcebergTestHarness,
+) -> anyhow::Result<(
+    BatchedWriter<IcebergIotValidPacket>,
+    tokio::task::JoinHandle<helium_iceberg::Result<()>>,
+    TempDir,
+)> {
+    let table = IcebergTable::<IcebergIotValidPacket>::from_catalog(
+        harness.iceberg_catalog().clone(),
+        iceberg::NAMESPACE,
+        valid_packet::TABLE_NAME,
+    )
+    .await?;
+
+    let spool = TempDir::new()?;
+    let (writer, task) = BatchedWriter::new(table, BatchedWriterConfig::new(spool.path()));
+
+    let task: BatchedWriterTask<IcebergIotValidPacket> = task;
+    let (_trigger, listener) = triggered::trigger();
+    let join = tokio::spawn(task.run(listener));
+
+    Ok((writer, join, spool))
 }
