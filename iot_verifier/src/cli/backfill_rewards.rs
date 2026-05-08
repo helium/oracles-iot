@@ -61,8 +61,8 @@ impl Cmd {
         let (backfiller, server) = IotRewardsBackfiller::create(
             pool,
             settings.ingest_bucket.connect().await,
-            Some(writer),
-            Some(opts),
+            writer,
+            opts,
         )
         .await?;
 

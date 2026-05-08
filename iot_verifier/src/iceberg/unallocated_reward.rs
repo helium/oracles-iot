@@ -11,7 +11,7 @@ pub const TABLE_NAME: &str = "unallocated_rewards";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct IcebergIotUnallocatedReward {
     pub reward_type: String,
-    pub amount: i64,
+    pub amount: u64,
     pub start_period: DateTime<FixedOffset>,
     pub end_period: DateTime<FixedOffset>,
 }
@@ -43,7 +43,7 @@ pub fn from_proto(
     };
     Ok(IcebergIotUnallocatedReward {
         reward_type,
-        amount: reward.amount as i64,
+        amount: reward.amount,
         start_period: into_offset(start_period.to_timestamp()?),
         end_period: into_offset(end_period.to_timestamp()?),
     })

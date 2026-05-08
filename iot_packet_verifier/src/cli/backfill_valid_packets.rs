@@ -60,8 +60,8 @@ impl Cmd {
         let (backfiller, server) = IotValidPacketsBackfiller::create(
             pool,
             settings.ingest_bucket.connect().await,
-            Some(writer),
-            Some(opts),
+            writer,
+            opts,
         )
         .await?;
 

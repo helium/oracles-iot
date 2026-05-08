@@ -20,6 +20,7 @@ helium-crypto = { workspace = true, features = [
     "solana",
 ] }
 helium-proto = { workspace = true }
+hex = "0.4"
 http = { workspace = true }
 http-serde = { workspace = true }
 humantime-serde = { workspace = true }

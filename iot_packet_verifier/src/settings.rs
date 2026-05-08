@@ -82,7 +82,7 @@ impl Settings {
         // Add in settings from the environment (with a prefix of VERIFY)
         // Eg.. `INJECT_DEBUG=1 ./target/app` would set the `debug` key
         builder
-            .add_source(Environment::with_prefix("PACKET_VERIFY").separator("_"))
+            .add_source(Environment::with_prefix("PACKET_VERIFY").separator("__"))
             .build()
             .and_then(|config| config.try_deserialize())
     }

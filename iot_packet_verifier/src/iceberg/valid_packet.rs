@@ -10,11 +10,11 @@ pub const TABLE_NAME: &str = "valid_packets";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct IcebergIotValidPacket {
     pub gateway: String,
-    pub payload_size: i64,
+    pub payload_size: u64,
     /// Hex-encoded payload hash. Stored as a string (rather than `binary`) so
     /// it round-trips through Trino/SQL queries as readable text.
     pub payload_hash: String,
-    pub num_dcs: i64,
+    pub num_dcs: u64,
     pub packet_timestamp: DateTime<FixedOffset>,
 }
 
@@ -41,19 +41,11 @@ pub fn table_definition() -> helium_iceberg::Result<TableDefinition> {
 pub fn from_record(record: IotValidPacket) -> IcebergIotValidPacket {
     IcebergIotValidPacket {
         gateway: record.gateway.to_string(),
-        payload_size: record.payload_size as i64,
-        payload_hash: hex_encode(&record.payload_hash),
-        num_dcs: record.num_dcs as i64,
+        payload_size: u64::from(record.payload_size),
+        payload_hash: hex::encode(&record.payload_hash),
+        num_dcs: u64::from(record.num_dcs),
         packet_timestamp: into_offset(record.packet_timestamp),
     }
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
 }
 
 #[cfg(test)]

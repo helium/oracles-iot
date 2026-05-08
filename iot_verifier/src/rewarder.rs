@@ -79,7 +79,7 @@ where
     A: SubDaoEpochRewardInfoResolver<Error = ClientError> + Send + Sync + 'static,
     P: PriceProvider + Send + Sync + 'static,
 {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn new(
         pool: PgPool,
         rewards_sink: file_sink::FileSinkClient<proto::IotRewardShare>,

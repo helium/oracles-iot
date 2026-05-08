@@ -25,8 +25,6 @@ use std::sync::Arc;
 use task_manager::{ManagedTask, TaskManager};
 use tokio::sync::{mpsc::Receiver, Mutex};
 
-pub type SharedCachedOrgClient<T> = Arc<Mutex<CachedOrgClient<T>>>;
-
 pub struct Daemon<D, C> {
     pub pool: Pool<Postgres>,
     pub verifier: Verifier<D, C>,
@@ -52,7 +50,6 @@ where
     D: Debiter + Send + Sync,
     C: ConfigServer,
 {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         pool: Pool<Postgres>,
         verifier: Verifier<D, C>,
@@ -138,6 +135,7 @@ pub struct Cmd {}
 
 impl Cmd {
     pub async fn run(self, settings: Settings) -> Result<()> {
+        custom_tracing::init(settings.log.clone(), settings.custom_tracing.clone()).await?;
         poc_metrics::start_metrics(&settings.metrics)?;
 
         // Set up the postgres pool:

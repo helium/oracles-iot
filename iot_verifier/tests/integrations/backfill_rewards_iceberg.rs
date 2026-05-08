@@ -339,8 +339,7 @@ async fn run_backfill(
     writer: IotRewardsFanoutWriter,
     opts: BackfillOptions,
 ) -> anyhow::Result<()> {
-    let (backfiller, server) =
-        IotRewardsBackfiller::create(pool, bucket, Some(writer), Some(opts)).await?;
+    let (backfiller, server) = IotRewardsBackfiller::create(pool, bucket, writer, opts).await?;
     tokio::time::timeout(
         TEST_TIMEOUT,
         task_manager::TaskManager::builder()

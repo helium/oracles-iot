@@ -33,31 +33,24 @@ pub struct BackfillOptions {
     pub idle_timeout: Option<Duration>,
 }
 
-pub struct BackfillPollerServer(Option<Box<dyn ManagedTask>>);
+pub struct BackfillPollerServer(Box<dyn ManagedTask>);
 
 impl BackfillPollerServer {
-    fn noop() -> Self {
-        Self(None)
-    }
-
     fn active(server: impl ManagedTask + 'static) -> Self {
-        Self(Some(Box::new(server)))
+        Self(Box::new(server))
     }
 }
 
 impl ManagedTask for BackfillPollerServer {
     fn start_task(self: Box<Self>, shutdown: triggered::Listener) -> task_manager::TaskFuture {
-        match (*self).0 {
-            Some(task) => task.start_task(shutdown),
-            None => task_manager::spawn(async { anyhow::Ok(()) }),
-        }
+        (*self).0.start_task(shutdown)
     }
 }
 
 pub struct Backfiller<C: IcebergBackfill> {
     pool: PgPool,
     reports: Receiver<FileInfoStream<C::FileRecord>>,
-    writer: Option<BatchedWriter<C::IcebergRow>>,
+    writer: BatchedWriter<C::IcebergRow>,
     done: bool,
 }
 
@@ -65,14 +58,13 @@ impl<C: IcebergBackfill> Backfiller<C> {
     pub fn new(
         pool: PgPool,
         reports: Receiver<FileInfoStream<C::FileRecord>>,
-        writer: Option<BatchedWriter<C::IcebergRow>>,
+        writer: BatchedWriter<C::IcebergRow>,
     ) -> Self {
-        let done = writer.is_none();
         Self {
             pool,
             reports,
             writer,
-            done,
+            done: false,
         }
     }
 
@@ -103,10 +95,6 @@ impl<C: IcebergBackfill> Backfiller<C> {
     }
 
     async fn handle_file(&self, file: FileInfoStream<C::FileRecord>) -> anyhow::Result<()> {
-        let Some(ref writer) = self.writer else {
-            return Ok(());
-        };
-
         let file_info = file.file_info.clone();
         let mut txn = self.pool.begin().await?;
 
@@ -116,7 +104,7 @@ impl<C: IcebergBackfill> Backfiller<C> {
         let rows: Vec<C::IcebergRow> = all.into_iter().filter_map(C::convert).collect();
         let written = rows.len();
 
-        writer
+        self.writer
             .queue_all(rows)
             .await
             .with_context(|| format!("queueing {} backfill to iceberg", C::FILE_TYPE))?;
@@ -165,17 +153,9 @@ where
     pub async fn create(
         pool: PgPool,
         bucket_client: BucketClient,
-        writer: Option<BatchedWriter<C::IcebergRow>>,
-        options: Option<BackfillOptions>,
+        writer: BatchedWriter<C::IcebergRow>,
+        options: BackfillOptions,
     ) -> anyhow::Result<(Self, BackfillPollerServer)> {
-        let (Some(writer), Some(options)) = (writer, options) else {
-            let (_, rx) = tokio::sync::mpsc::channel(1);
-            return Ok((
-                Backfiller::new(pool, rx, None),
-                BackfillPollerServer::noop(),
-            ));
-        };
-
         let (reports, reports_server) = file_source::continuous_source()
             .state(pool.clone())
             .bucket_client(bucket_client)
@@ -189,7 +169,7 @@ where
             .await?;
 
         Ok((
-            Backfiller::new(pool, reports, Some(writer)),
+            Backfiller::new(pool, reports, writer),
             BackfillPollerServer::active(reports_server),
         ))
     }

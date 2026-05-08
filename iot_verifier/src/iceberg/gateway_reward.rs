@@ -12,9 +12,9 @@ pub const TABLE_NAME: &str = "gateway_rewards";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct IcebergIotGatewayReward {
     pub hotspot_key: String,
-    pub beacon_amount: i64,
-    pub witness_amount: i64,
-    pub dc_transfer_amount: i64,
+    pub beacon_amount: u64,
+    pub witness_amount: u64,
+    pub dc_transfer_amount: u64,
     pub start_period: DateTime<FixedOffset>,
     pub end_period: DateTime<FixedOffset>,
 }
@@ -44,9 +44,9 @@ pub fn from_proto(
 ) -> Result<IcebergIotGatewayReward, TimestampDecodeError> {
     Ok(IcebergIotGatewayReward {
         hotspot_key: PublicKeyBinary::from(reward.hotspot_key).to_string(),
-        beacon_amount: reward.beacon_amount as i64,
-        witness_amount: reward.witness_amount as i64,
-        dc_transfer_amount: reward.dc_transfer_amount as i64,
+        beacon_amount: reward.beacon_amount,
+        witness_amount: reward.witness_amount,
+        dc_transfer_amount: reward.dc_transfer_amount,
         start_period: into_offset(start_period.to_timestamp()?),
         end_period: into_offset(end_period.to_timestamp()?),
     })

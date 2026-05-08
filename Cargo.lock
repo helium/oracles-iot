@@ -4698,6 +4698,7 @@ dependencies = [
  "helium-crypto",
  "helium-iceberg",
  "helium-proto",
+ "hex",
  "http 1.4.0",
  "http-serde",
  "humantime-serde",

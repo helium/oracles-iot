@@ -1,7 +1,6 @@
 pub mod backfill_valid_packets;
-pub mod server;
 
-use crate::{backfill, settings::Settings};
+use crate::{backfill, daemon, settings::Settings};
 use anyhow::Result;
 use std::path;
 
@@ -27,7 +26,7 @@ impl Cli {
 
 #[derive(Debug, clap::Subcommand)]
 pub enum Cmd {
-    Server(server::Cmd),
+    Server(daemon::Cmd),
     BackfillValidPackets(backfill_valid_packets::Cmd),
 }
 

@@ -10,7 +10,7 @@ pub const TABLE_NAME: &str = "operational_rewards";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct IcebergIotOperationalReward {
-    pub amount: i64,
+    pub amount: u64,
     pub start_period: DateTime<FixedOffset>,
     pub end_period: DateTime<FixedOffset>,
 }
@@ -33,7 +33,7 @@ pub fn from_proto(
     end_period: u64,
 ) -> Result<IcebergIotOperationalReward, TimestampDecodeError> {
     Ok(IcebergIotOperationalReward {
-        amount: reward.amount as i64,
+        amount: reward.amount,
         start_period: into_offset(start_period.to_timestamp()?),
         end_period: into_offset(end_period.to_timestamp()?),
     })
