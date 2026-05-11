@@ -16,7 +16,7 @@ use file_store_oracles::{
     FileType,
 };
 use futures_util::TryFutureExt;
-use helium_iceberg::{BatchedWriter, BatchedWriterConfig};
+use helium_iceberg::{DataWriter, IcebergTable};
 use helium_proto::services::packet_verifier::{InvalidPacket, ValidPacket};
 use iot_config::client::OrgClient;
 use solana::burn::SolanaRpc;
@@ -32,7 +32,7 @@ pub struct Daemon<D, C> {
     pub valid_packets: FileSinkClient<ValidPacket>,
     pub invalid_packets: FileSinkClient<InvalidPacket>,
     pub minimum_allowed_balance: u64,
-    pub iceberg_writer: Option<BatchedWriter<IcebergIotValidPacket>>,
+    pub iceberg_writer: Option<IcebergTable<IcebergIotValidPacket>>,
 }
 
 impl<D, C> ManagedTask for Daemon<D, C>
@@ -57,7 +57,7 @@ where
         valid_packets: FileSinkClient<ValidPacket>,
         invalid_packets: FileSinkClient<InvalidPacket>,
         minimum_allowed_balance: u64,
-        iceberg_writer: Option<BatchedWriter<IcebergIotValidPacket>>,
+        iceberg_writer: Option<IcebergTable<IcebergIotValidPacket>>,
     ) -> Self {
         Self {
             pool,
@@ -94,6 +94,7 @@ where
         &mut self,
         report_file: FileInfoStream<PacketRouterPacketReport>,
     ) -> Result<()> {
+        let file_key = report_file.file_info.key.clone();
         tracing::info!(file = %report_file.file_info, "Verifying file");
 
         let mut transaction = self.pool.begin().await?;
@@ -120,10 +121,14 @@ where
         self.invalid_packets.commit().await?;
 
         if let Some(writer) = &self.iceberg_writer {
+            // `write_idempotent` stamps `helium.write_id = file_key` on the
+            // snapshot, so re-processing the same source file (e.g. after a
+            // crash before `files_processed` was committed) is a no-op at
+            // iceberg.
             writer
-                .queue_all(iceberg_buffer)
+                .write_idempotent(&file_key, iceberg_buffer)
                 .await
-                .map_err(|e| anyhow::anyhow!("queueing iceberg valid_packets: {e}"))?;
+                .map_err(|e| anyhow::anyhow!("writing iceberg valid_packets: {e}"))?;
         }
 
         Ok(())
@@ -205,15 +210,11 @@ impl Cmd {
             .create()
             .await?;
 
-        let (iceberg_writer, iceberg_task) = match &settings.iceberg_settings {
+        let iceberg_writer = match &settings.iceberg_settings {
             Some(iceberg_settings) => {
-                let table = iceberg::open_valid_packets_table(iceberg_settings).await?;
-                let spool_dir =
-                    std::path::Path::new(&settings.cache).join("iceberg-spool/valid_packets");
-                let (writer, task) = BatchedWriter::new(table, BatchedWriterConfig::new(spool_dir));
-                (Some(writer), Some(task))
+                Some(iceberg::open_valid_packets_table(iceberg_settings).await?)
             }
-            None => (None, None),
+            None => None,
         };
 
         let balance_store = balances.balances();
@@ -234,7 +235,7 @@ impl Cmd {
         let minimum_allowed_balance = settings.minimum_allowed_balance;
         let monitor_funds_period = settings.monitor_funds_period;
 
-        let mut builder = TaskManager::builder()
+        TaskManager::builder()
             .add_task(file_upload_server)
             .add_task(valid_packets_server)
             .add_task(invalid_packets_server)
@@ -251,11 +252,10 @@ impl Cmd {
             })
             .add_task(verifier_daemon)
             .add_task(burner)
-            .add_task(report_files_server);
-        if let Some(task) = iceberg_task {
-            builder = builder.add_task(task);
-        }
-        builder.build().start().await?;
+            .add_task(report_files_server)
+            .build()
+            .start()
+            .await?;
         Ok(())
     }
 }
