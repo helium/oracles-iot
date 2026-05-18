@@ -36,7 +36,7 @@ async fn test_poc_and_dc_rewards(pool: PgPool) -> anyhow::Result<()> {
 
     // run rewards for poc and dc
     let (_, rewards) = tokio::join!(
-        rewarder::reward_poc_and_dc(&pool, &iot_rewards_client, &reward_info, price_info),
+        rewarder::reward_poc_and_dc(&pool, &iot_rewards_client, &reward_info, price_info, None),
         receive_expected_rewards(&mut iot_rewards)
     );
     if let Ok((gateway_rewards, unallocated_poc_reward)) = rewards {

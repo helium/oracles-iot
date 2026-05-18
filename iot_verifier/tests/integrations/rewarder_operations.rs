@@ -11,7 +11,7 @@ async fn test_operations() -> anyhow::Result<()> {
     let reward_info = rewards_info_24_hours();
 
     let (_, rewards) = tokio::join!(
-        rewarder::reward_operational(&iot_rewards_client, &reward_info),
+        rewarder::reward_operational(&iot_rewards_client, &reward_info, None),
         receive_expected_rewards(&mut iot_rewards)
     );
     if let Ok(ops_reward) = rewards {

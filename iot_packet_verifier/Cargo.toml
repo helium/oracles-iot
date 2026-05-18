@@ -20,6 +20,7 @@ helium-crypto = { workspace = true, features = [
     "solana",
 ] }
 helium-proto = { workspace = true }
+hex = "0.4"
 http = { workspace = true }
 http-serde = { workspace = true }
 humantime-serde = { workspace = true }
@@ -38,8 +39,14 @@ custom-tracing = { workspace = true }
 db-store = { workspace = true }
 file-store = { workspace = true }
 file-store-oracles = { workspace = true }
+helium-iceberg = { workspace = true }
 iot-config = { path = "../iot_config" }
 poc-metrics = { workspace = true }
 solana = { workspace = true }
 task-manager = { workspace = true }
 tls-init = { workspace = true }
+
+[dev-dependencies]
+helium-iceberg = { workspace = true, features = ["test-harness"] }
+tempfile = { workspace = true }
+trino-rust-client = "0.9"

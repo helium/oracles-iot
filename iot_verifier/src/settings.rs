@@ -156,6 +156,12 @@ pub struct Settings {
         default = "default_region_params_refresh_interval"
     )]
     pub region_params_refresh_interval: Duration,
+
+    /// Iceberg connection settings. When present, the rewarder mirrors every
+    /// reward share it emits into the configured Iceberg tables in addition
+    /// to the existing S3 file sink.
+    #[serde(default)]
+    pub iceberg_settings: Option<helium_iceberg::Settings>,
 }
 
 fn default_gateway_refresh_interval() -> Duration {
@@ -266,7 +272,7 @@ impl Settings {
         // Add in settings from the environment (with a prefix of VERIFY)
         // Eg.. `INJECT_DEBUG=1 ./target/app` would set the `debug` key
         builder
-            .add_source(Environment::with_prefix("VERIFY").separator("_"))
+            .add_source(Environment::with_prefix("VERIFY").separator("__"))
             .build()
             .and_then(|config| config.try_deserialize())
     }

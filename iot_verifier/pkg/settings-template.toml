@@ -118,3 +118,25 @@ bucket = "mainnet-verified-bucket"
 # Endpoint for metrics. Default below
 #
 # endpoint = "127.0.0.1:19000"
+
+# Iceberg connection settings, used by `backfill-rewards` and `backfill-burns`.
+# Optional; the `server` subcommand does not need this section.
+#
+# [iceberg_settings]
+# catalog_uri = "https://iceberg-catalog.example/catalog"
+# catalog_name = "helium"
+# warehouse = "s3://iceberg-warehouse/"
+#
+# [iceberg_settings.auth]
+# # token = "..."           # static OAuth2 token
+# # credential = "..."      # OAuth2 client_id:client_secret
+# # oauth2_server_uri = "..."
+# # scope = "..."
+#
+# [iceberg_settings.s3]
+# # endpoint = "https://s3.us-west-2.amazonaws.com"
+# # region = "us-west-2"
+# # access_key_id = "..."
+# # secret_access_key = "..."
+# # path_style_access = false
+# # disable_config_load = false

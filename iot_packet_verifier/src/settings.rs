@@ -36,6 +36,12 @@ pub struct Settings {
     /// any disabled orgs.
     #[serde(with = "humantime_serde", default = "default_monitor_funds_period")]
     pub monitor_funds_period: Duration,
+
+    /// Iceberg connection settings. When present, the daemon mirrors every
+    /// `ValidPacket` it emits into the configured Iceberg table in addition to
+    /// the existing S3 file sink.
+    #[serde(default)]
+    pub iceberg_settings: Option<helium_iceberg::Settings>,
 }
 
 fn default_start_after() -> DateTime<Utc> {
@@ -76,7 +82,7 @@ impl Settings {
         // Add in settings from the environment (with a prefix of VERIFY)
         // Eg.. `INJECT_DEBUG=1 ./target/app` would set the `debug` key
         builder
-            .add_source(Environment::with_prefix("PACKET_VERIFY").separator("_"))
+            .add_source(Environment::with_prefix("PACKET_VERIFY").separator("__"))
             .build()
             .and_then(|config| config.try_deserialize())
     }

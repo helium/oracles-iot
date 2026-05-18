@@ -1,10 +1,13 @@
 extern crate tls_init;
 
+pub mod backfill;
+pub mod cli;
 pub mod entropy;
 pub mod entropy_loader;
 pub mod gateway_cache;
 pub mod gateway_updater;
 pub mod hex_density;
+pub mod iceberg;
 pub mod last_beacon;
 pub mod last_beacon_reciprocity;
 pub mod last_witness;

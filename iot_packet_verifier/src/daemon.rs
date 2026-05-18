@@ -1,9 +1,10 @@
 use crate::{
     balances::BalanceCache,
     burner::Burner,
+    iceberg::{self, IcebergIotValidPacket, ValidPacketIcebergWriter},
     pending::confirm_pending_txns,
     settings::Settings,
-    verifier::{CachedOrgClient, ConfigServer, Verifier},
+    verifier::{CachedOrgClient, ConfigServer, Debiter, Verifier},
 };
 use anyhow::{bail, Result};
 use file_store::{
@@ -15,38 +16,60 @@ use file_store_oracles::{
     FileType,
 };
 use futures_util::TryFutureExt;
+use helium_iceberg::{DataWriter, IcebergTable};
 use helium_proto::services::packet_verifier::{InvalidPacket, ValidPacket};
-use iot_config::client::{org_client::Orgs, OrgClient};
+use iot_config::client::OrgClient;
 use solana::burn::SolanaRpc;
 use sqlx::{Pool, Postgres};
 use std::sync::Arc;
 use task_manager::{ManagedTask, TaskManager};
 use tokio::sync::{mpsc::Receiver, Mutex};
 
-type SharedCachedOrgClient<T> = Arc<Mutex<CachedOrgClient<T>>>;
-
-struct Daemon<O> {
-    pool: Pool<Postgres>,
-    verifier: Verifier<BalanceCache<Option<Arc<SolanaRpc>>>, SharedCachedOrgClient<O>>,
-    report_files: Receiver<FileInfoStream<PacketRouterPacketReport>>,
-    valid_packets: FileSinkClient<ValidPacket>,
-    invalid_packets: FileSinkClient<InvalidPacket>,
-    minimum_allowed_balance: u64,
+pub struct Daemon<D, C> {
+    pub pool: Pool<Postgres>,
+    pub verifier: Verifier<D, C>,
+    pub report_files: Receiver<FileInfoStream<PacketRouterPacketReport>>,
+    pub valid_packets: FileSinkClient<ValidPacket>,
+    pub invalid_packets: FileSinkClient<InvalidPacket>,
+    pub minimum_allowed_balance: u64,
+    pub iceberg_writer: Option<IcebergTable<IcebergIotValidPacket>>,
 }
 
-impl<O> ManagedTask for Daemon<O>
+impl<D, C> ManagedTask for Daemon<D, C>
 where
-    O: Orgs,
+    D: Debiter + Send + Sync + 'static,
+    C: ConfigServer,
 {
     fn start_task(self: Box<Self>, shutdown: triggered::Listener) -> task_manager::TaskFuture {
         task_manager::spawn(self.run(shutdown))
     }
 }
 
-impl<O> Daemon<O>
+impl<D, C> Daemon<D, C>
 where
-    O: Orgs,
+    D: Debiter + Send + Sync,
+    C: ConfigServer,
 {
+    pub fn new(
+        pool: Pool<Postgres>,
+        verifier: Verifier<D, C>,
+        report_files: Receiver<FileInfoStream<PacketRouterPacketReport>>,
+        valid_packets: FileSinkClient<ValidPacket>,
+        invalid_packets: FileSinkClient<InvalidPacket>,
+        minimum_allowed_balance: u64,
+        iceberg_writer: Option<IcebergTable<IcebergIotValidPacket>>,
+    ) -> Self {
+        Self {
+            pool,
+            verifier,
+            report_files,
+            valid_packets,
+            invalid_packets,
+            minimum_allowed_balance,
+            iceberg_writer,
+        }
+    }
+
     pub async fn run(mut self, shutdown: triggered::Listener) -> Result<()> {
         tracing::info!("Starting verifier daemon");
         loop {
@@ -67,27 +90,46 @@ where
         Ok(())
     }
 
-    async fn handle_file(
+    pub async fn handle_file(
         &mut self,
         report_file: FileInfoStream<PacketRouterPacketReport>,
     ) -> Result<()> {
+        let file_key = report_file.file_info.key.clone();
         tracing::info!(file = %report_file.file_info, "Verifying file");
 
         let mut transaction = self.pool.begin().await?;
         let reports = report_file.into_stream(&mut transaction).await?;
+
+        let mut iceberg_buffer: Vec<IcebergIotValidPacket> = Vec::new();
+        let mut wrapped_valid = ValidPacketIcebergWriter {
+            inner: &mut self.valid_packets,
+            iceberg_buffer: &mut iceberg_buffer,
+            enabled: self.iceberg_writer.is_some(),
+        };
 
         self.verifier
             .verify(
                 self.minimum_allowed_balance,
                 &mut transaction,
                 reports,
-                &mut self.valid_packets,
+                &mut wrapped_valid,
                 &mut self.invalid_packets,
             )
             .await?;
         transaction.commit().await?;
         self.valid_packets.commit().await?;
         self.invalid_packets.commit().await?;
+
+        if let Some(writer) = &self.iceberg_writer {
+            // `write_idempotent` stamps `helium.write_id = file_key` on the
+            // snapshot, so re-processing the same source file (e.g. after a
+            // crash before `files_processed` was committed) is a no-op at
+            // iceberg.
+            writer
+                .write_idempotent(&file_key, iceberg_buffer)
+                .await
+                .map_err(|e| anyhow::anyhow!("writing iceberg valid_packets: {e}"))?;
+        }
 
         Ok(())
     }
@@ -98,6 +140,7 @@ pub struct Cmd {}
 
 impl Cmd {
     pub async fn run(self, settings: Settings) -> Result<()> {
+        custom_tracing::init(settings.log.clone(), settings.custom_tracing.clone()).await?;
         poc_metrics::start_metrics(&settings.metrics)?;
 
         // Set up the postgres pool:
@@ -167,18 +210,26 @@ impl Cmd {
             .create()
             .await?;
 
+        let iceberg_writer = match &settings.iceberg_settings {
+            Some(iceberg_settings) => {
+                Some(iceberg::open_valid_packets_table(iceberg_settings).await?)
+            }
+            None => None,
+        };
+
         let balance_store = balances.balances();
-        let verifier_daemon = Daemon {
+        let verifier_daemon = Daemon::new(
             pool,
-            report_files,
-            valid_packets,
-            invalid_packets,
-            verifier: Verifier {
+            Verifier {
                 debiter: balances,
                 config_server: org_client.clone(),
             },
-            minimum_allowed_balance: settings.minimum_allowed_balance,
-        };
+            report_files,
+            valid_packets,
+            invalid_packets,
+            settings.minimum_allowed_balance,
+            iceberg_writer,
+        );
 
         // Run the services:
         let minimum_allowed_balance = settings.minimum_allowed_balance;
