@@ -280,3 +280,43 @@ jobs:
         run: |
           chmod +x ./.github/scripts/make_debian.sh
           ./.github/scripts/make_debian.sh
+  build-iot-images:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [fmt, clippy, tests]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        package:
+          [
+            "ingest",
+            "iot-config",
+            "iot-packet-verifier",
+            "iot-verifier",
+            "poc-entropy",
+            "price",
+            "reward-index",
+          ]
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-build-image-${{ matrix.package }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+      - name: Build and Push Runner Image
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7
+        with:
+          context: .
+          file: Dockerfile
+          target: runner
+          push: true
+          tags: ghcr.io/${{ github.repository }}/${{ matrix.package }}:${{ github.ref_name }}
+          build-args: |
+            PACKAGE=${{ matrix.package }}
