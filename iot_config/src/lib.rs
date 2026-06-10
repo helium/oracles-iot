@@ -38,6 +38,26 @@ pub type GrpcResult<T> = Result<Response<T>, Status>;
 pub type GrpcStreamResult<T> = ReceiverStream<Result<T, Status>>;
 pub type GrpcStreamRequest<T> = tonic::Request<tonic::Streaming<T>>;
 
+/// Deserialize a helium keypair from a base64-encoded string of the raw
+/// keypair bytes. This lets the keypair be supplied via an environment
+/// variable (e.g. a Kubernetes Secret) instead of being mounted as a file.
+pub fn deserialize_helium_keypair<'de, D>(
+    deserializer: D,
+) -> Result<std::sync::Arc<helium_crypto::Keypair>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use base64::Engine;
+    use serde::Deserialize;
+    let string = String::deserialize(deserializer)?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(string)
+        .map_err(serde::de::Error::custom)?;
+    helium_crypto::Keypair::try_from(bytes.as_slice())
+        .map(std::sync::Arc::new)
+        .map_err(serde::de::Error::custom)
+}
+
 pub const BROADCAST_CHANNEL_QUEUE: usize = 1024;
 
 pub fn update_channel<T: Clone>() -> broadcast::Sender<T> {

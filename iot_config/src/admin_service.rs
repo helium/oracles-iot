@@ -17,6 +17,7 @@ use helium_proto::{
 };
 use helium_proto_crypto::MsgVerify;
 use sqlx::{Pool, Postgres};
+use std::sync::Arc;
 use tokio::sync::watch;
 use tonic::{Request, Response, Status};
 
@@ -26,7 +27,7 @@ pub struct AdminService {
     pool: Pool<Postgres>,
     region_map: RegionMapReader,
     region_updater: watch::Sender<RegionMap>,
-    signing_key: Keypair,
+    signing_key: Arc<Keypair>,
 }
 
 impl AdminService {
@@ -44,7 +45,7 @@ impl AdminService {
             pool,
             region_map,
             region_updater,
-            signing_key: settings.signing_keypair()?,
+            signing_key: settings.signing_keypair(),
         })
     }
 

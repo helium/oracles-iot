@@ -56,7 +56,7 @@ impl Settings {
         // Add in settings from the environment (with a prefix of APP)
         // Eg.. `MI_DEBUG=1 ./target/app` would set the `debug` key
         builder
-            .add_source(Environment::with_prefix("ENTROPY").separator("_"))
+            .add_source(Environment::with_prefix("ENTROPY").separator("__"))
             .build()
             .and_then(|config| config.try_deserialize())
     }
