@@ -27,7 +27,6 @@ use iot_config::{
 use price_tracker::PriceProvider;
 use reward_scheduler::Scheduler;
 use rust_decimal::prelude::*;
-use rust_decimal_macros::dec;
 use solana::{SolPubkey, Token};
 use sqlx::{PgExecutor, PgPool, Pool, Postgres};
 use std::{ops::Range, time::Duration};
@@ -188,7 +187,8 @@ where
             .then(RewardRowAccumulator::default);
 
         // process data transfer rewards; returns the DC underflow for the ops fund
-        let dc_underflow = reward_dc(
+        // and the per-share rate used (for the reward manifest)
+        let (dc_underflow, dc_bones_per_share) = reward_dc(
             &self.pool,
             &self.rewards_sink,
             &reward_info,
@@ -228,7 +228,7 @@ where
 
         let mut transaction = self.pool.begin().await?;
 
-        GatewayShares::clear_rewarded_shares(&mut transaction, reward_info.epoch_period.start)
+        GatewayShares::clear_rewarded_shares(&mut transaction, reward_info.epoch_period.end)
             .await?;
 
         save_next_reward_epoch(&mut *transaction, reward_info.epoch_day + 1).await?;
@@ -243,7 +243,7 @@ where
                 value: "0".to_string(),
             }),
             dc_bones_per_share: Some(helium_proto::Decimal {
-                value: dec!(0).to_string(),
+                value: dc_bones_per_share.to_string(),
             }),
             token: IotRewardToken::Hnt as i32,
         };
@@ -307,7 +307,7 @@ pub async fn reward_dc(
     reward_info: &EpochRewardInfo,
     price_info: PriceInfo,
     mut iceberg_rows: Option<&mut RewardRowAccumulator>,
-) -> anyhow::Result<Decimal> {
+) -> anyhow::Result<(Decimal, Decimal)> {
     let reward_shares =
         reward_share::aggregate_reward_shares(pool, &reward_info.epoch_period).await?;
     let gateway_shares = GatewayShares::new(reward_shares);
@@ -349,7 +349,7 @@ pub async fn reward_dc(
         "data transfer rewards complete"
     );
 
-    Ok(dc_underflow)
+    Ok((dc_underflow, dc_transfer_rewards_per_share))
 }
 
 pub async fn reward_operational(
