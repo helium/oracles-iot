@@ -1,0 +1,292 @@
+# Standalone infrastructure for HIP-0149 local transition testing.
+#
+# Two usage modes:
+#
+#  BASIC (rewarder only — uses existing gateway_dc_shares from the snapshot):
+#    DUMP_FILE=./iot_verifier_prod.dump \
+#      docker compose -f hip149/docker-compose.yml up -d
+#
+#    Runs: postgres + rustfs. Binaries needed on host: iot_verifier
+#
+#  FULL (end-to-end pipeline with local iot_config + price oracle):
+#    DUMP_FILE=./iot_verifier_prod.dump \
+#    CONFIG_DB_DUMP=./iot_config_prod.dump \
+#    METADATA_DB_DUMP=./iot_config_metadata.dump \
+#    IOT_CONFIG_KEYPAIR=./iot_config_keypair.bin \
+#    IOT_CONFIG_ADMIN=<admin_b58_pubkey> \
+#      docker compose -f hip149/docker-compose.yml --profile full up -d
+#
+#    Runs: all of the above + iot_config + price. Builds both from the
+#    local Dockerfile (PACKAGE arg). Binaries needed on host: iot_verifier
+#
+# Host ports (chosen to not conflict with the main docker-compose.yml):
+#   iot_verifier postgres  → localhost:5433
+#   iot_config config_db   → localhost:5434   (profile: full)
+#   iot_config metadata_db → localhost:5435   (profile: full)
+#   rustfs S3 API          → localhost:9100
+#   rustfs console         → localhost:9101
+#   iot_config gRPC        → localhost:9200   (profile: full)
+
+services:
+
+  # ── Core infra (always started) ────────────────────────────────────────────
+
+  postgres:
+    image: postgres:14.17
+    networks:
+      - hip149_net
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - hip149_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rustfs:
+    image: rustfs/rustfs:1.0.0-alpha.90
+    networks:
+      - hip149_net
+    restart: unless-stopped
+    ports:
+      - "9100:9000"
+      - "9101:9001"
+    volumes:
+      - hip149_rustfs_data:/data
+    environment:
+      - RUSTFS_CONSOLE_ENABLE=true
+      - RUSTFS_ACCESS_KEY=admin
+      - RUSTFS_SECRET_KEY=admin
+    healthcheck:
+      test: ["CMD", "sh", "-c", "curl -sf http://127.0.0.1:9000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  rustfs-init:
+    image: amazon/aws-cli:2.34.18
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    networks:
+      - hip149_net
+    restart: no
+    environment:
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=admin
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        aws --endpoint-url http://rustfs:9000 s3 mb s3://iot-verifier-rewards 2>/dev/null || true
+        aws --endpoint-url http://rustfs:9000 s3 mb s3://price-reports 2>/dev/null || true
+        aws --endpoint-url http://rustfs:9000 s3 mb s3://packet-ingest 2>/dev/null || true
+        echo "Buckets ready"
+
+  db-restore:
+    image: postgres:14.17
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - hip149_net
+    restart: no
+    environment:
+      PGPASSWORD: postgres
+    volumes:
+      - ${DUMP_FILE:-./iot_verifier_prod.dump}:/dump/prod.dump:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        echo "==> Creating iot_verifier test database..."
+        psql -h postgres -U postgres -c "DROP DATABASE IF EXISTS iot_verifier_hip149_test;" postgres
+        psql -h postgres -U postgres -c "CREATE DATABASE iot_verifier_hip149_test;" postgres
+
+        echo "==> Restoring iot_verifier prod snapshot..."
+        pg_restore --no-owner --no-acl \
+          -h postgres -U postgres \
+          -d iot_verifier_hip149_test \
+          /dump/prod.dump
+
+        echo "==> Bypassing data-currency check for frozen snapshot..."
+        psql -h postgres -U postgres -d iot_verifier_hip149_test -c "
+          INSERT INTO meta (key, value)
+          VALUES (
+            'disable_complete_data_checks_until',
+            EXTRACT(EPOCH FROM NOW() + INTERVAL '7 days')::TEXT
+          )
+          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+        "
+
+        echo "==> DB restore complete. Snapshot state:"
+        psql -h postgres -U postgres -d iot_verifier_hip149_test -c "
+          SELECT key, value FROM meta
+          WHERE key IN ('next_reward_epoch', 'disable_complete_data_checks_until', 'last_rewarded_end_time');
+        "
+        psql -h postgres -U postgres -d iot_verifier_hip149_test -c "
+          SELECT COUNT(*) AS dc_share_rows, SUM(num_dcs) AS total_dcs FROM gateway_dc_shares;
+        "
+
+  # ── Full pipeline (--profile full) ─────────────────────────────────────────
+  # Adds local iot_config (gateway lookups) and price oracle (HNT price data).
+  # Both are built from the local Dockerfile (same image the CI uses).
+
+  config-db:
+    profiles: ["full"]
+    image: postgres:14.17
+    networks:
+      - hip149_net
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: config_db
+    ports:
+      - "5434:5432"
+    volumes:
+      - hip149_config_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d config_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  config-db-restore:
+    profiles: ["full"]
+    image: postgres:14.17
+    depends_on:
+      config-db:
+        condition: service_healthy
+    networks:
+      - hip149_net
+    restart: no
+    environment:
+      PGPASSWORD: postgres
+    volumes:
+      - ${CONFIG_DB_DUMP:-./iot_config_prod.dump}:/dump/config.dump:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        echo "==> Restoring iot_config config_db..."
+        pg_restore --no-owner --no-acl \
+          -h config-db -U postgres -d config_db \
+          /dump/config.dump
+        echo "==> config_db restore complete"
+
+  metadata-db:
+    profiles: ["full"]
+    image: postgres:14.17
+    networks:
+      - hip149_net
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: metadata_db
+    ports:
+      - "5435:5432"
+    volumes:
+      - hip149_metadata_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d metadata_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  metadata-db-restore:
+    profiles: ["full"]
+    image: postgres:14.17
+    depends_on:
+      metadata-db:
+        condition: service_healthy
+    networks:
+      - hip149_net
+    restart: no
+    environment:
+      PGPASSWORD: postgres
+    volumes:
+      - ${METADATA_DB_DUMP:-./iot_config_metadata.dump}:/dump/metadata.dump:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        echo "==> Restoring iot_config metadata_db..."
+        pg_restore --no-owner --no-acl \
+          -h metadata-db -U postgres -d metadata_db \
+          /dump/metadata.dump
+        echo "==> metadata_db restore complete"
+
+  iot-config:
+    profiles: ["full"]
+    build:
+      context: ..
+      args:
+        PACKAGE: iot-config
+    networks:
+      - hip149_net
+    ports:
+      - "9200:8080"
+    environment:
+      - CFG__DATABASE__URL=postgresql://postgres:postgres@config-db:5432/config_db
+      - CFG__METADATA__URL=postgresql://postgres:postgres@metadata-db:5432/metadata_db
+      - CFG__KEYPAIR=/etc/iot-config/keypair.bin
+      - CFG__ADMIN=${IOT_CONFIG_ADMIN:?IOT_CONFIG_ADMIN must be set}
+      - CFG__NETWORK=mainnet
+      - CFG__METRICS__ENDPOINT=0.0.0.0:19000
+    volumes:
+      - ${IOT_CONFIG_KEYPAIR:?IOT_CONFIG_KEYPAIR must be set}:/etc/iot-config/keypair.bin:ro
+    depends_on:
+      # Depend on DB services being healthy, not on restore jobs.
+      # In seed mode (hip149/seed.sh) the DBs are populated directly — no restore jobs run.
+      # In dump mode, run the restore jobs first, then start iot-config manually.
+      config-db:
+        condition: service_healthy
+      metadata-db:
+        condition: service_healthy
+    entrypoint: ["/opt/iot-config/bin/iot-config", "server"]
+    restart: unless-stopped
+
+  price:
+    profiles: ["full"]
+    build:
+      context: ..
+      args:
+        PACKAGE: price
+    networks:
+      - hip149_net
+    environment:
+      # Static price override — no Hermes API needed for local testing.
+      # 100_000_000 = $1.00 USD per HNT (8 decimal places).
+      - PRICE__DEFAULT_PRICE=${HNT_PRICE_OVERRIDE:-100000000}
+      - PRICE__OUTPUT_BUCKET=price-reports
+      - PRICE__CACHE=/tmp/price-cache
+      - PRICE__FILE_STORE__ENDPOINT=http://rustfs:9000
+      - PRICE__FILE_STORE__REGION=us-east-1
+      - PRICE__FILE_STORE__ACCESS_KEY_ID=admin
+      - PRICE__FILE_STORE__SECRET_ACCESS_KEY=admin
+      - PRICE__METRICS__ENDPOINT=0.0.0.0:19000
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=admin
+    depends_on:
+      rustfs-init:
+        condition: service_completed_successfully
+    entrypoint: ["/opt/price/bin/price", "server"]
+    restart: unless-stopped
+
+networks:
+  hip149_net:
+
+volumes:
+  hip149_postgres_data:
+  hip149_rustfs_data:
+  hip149_config_db_data:
+  hip149_metadata_db_data:

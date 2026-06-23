@@ -1,8 +1,6 @@
-use crate::entropy_loader::EntropyLoader;
 use crate::{
-    gateway_cache::GatewayCache, gateway_updater::GatewayUpdater, loader, packet_loader, purger,
-    rewarder::Rewarder, runner, telemetry, tx_scaler::Server as DensityScaler,
-    witness_updater::WitnessUpdater, Settings,
+    gateway_cache::GatewayCache, gateway_updater::GatewayUpdater, packet_loader,
+    rewarder::Rewarder, telemetry, Settings,
 };
 
 use anyhow::Result;
@@ -12,10 +10,7 @@ use file_store_oracles::{
     FileType,
 };
 use helium_proto::{
-    services::poc_lora::{
-        IotRewardShare, LoraInvalidBeaconReportV1, LoraInvalidWitnessReportV1, LoraPocV1,
-        NonRewardablePacket,
-    },
+    services::poc_lora::{IotRewardShare, NonRewardablePacket},
     RewardManifest,
 };
 use iot_config::client::sub_dao_client::SubDaoClient;
@@ -31,11 +26,9 @@ impl Cmd {
     pub async fn run(&self, settings: &Settings) -> Result<()> {
         custom_tracing::init(settings.log.clone(), settings.custom_tracing.clone()).await?;
 
-        // Install the prometheus metrics exporter
         poc_metrics::start_metrics(&settings.metrics)?;
         tracing::info!("Settings: {}", settings.as_json_pretty());
 
-        // Create database pool and run migrations
         let pool = settings.database.connect(env!("CARGO_PKG_NAME")).await?;
         sqlx::migrate!().run(&pool).await?;
 
@@ -51,49 +44,22 @@ impl Cmd {
         let iot_config_client = IotConfigClient::from_settings(&settings.iot_config_client)?;
         let sub_dao_rewards_client = SubDaoClient::from_settings(&settings.iot_config_client)?;
 
-        // create the witness updater to handle serialization of last witness updates to db
-        // also exposes a cache of the last witness updates
-        let (witness_updater, witness_updater_server) = WitnessUpdater::new(pool.clone()).await?;
-
         // *
-        // setup caches
+        // gateway cache — still required by packet_loader
         // *
         let (gateway_updater_receiver, gateway_updater_server) =
             GatewayUpdater::new(settings.gateway_refresh_interval, iot_config_client.clone())
                 .await?;
-        let gateway_cache = GatewayCache::new(gateway_updater_receiver.clone());
+        let gateway_cache = GatewayCache::new(gateway_updater_receiver);
 
         // *
-        // setup the price tracker requirements
+        // price tracker
         // *
         let (price_tracker, price_daemon) = PriceTracker::new(&settings.price_tracker).await?;
 
         // *
-        // setup the loader requirements
+        // rewarder
         // *
-        let loader = loader::Loader::from_settings(
-            settings,
-            pool.clone(),
-            settings.file_store_clients.ingest_input.connect().await,
-            gateway_cache.clone(),
-        )
-        .await?;
-
-        // *
-        // setup the density scaler requirements
-        // *
-        let density_scaler = DensityScaler::new(
-            settings.loader_window_max_lookback_age,
-            pool.clone(),
-            gateway_updater_receiver,
-        )
-        .await?;
-
-        // *
-        // setup the rewarder requirements
-        // *
-
-        // Gateway reward shares sink
         let (rewards_sink, gateway_rewards_sink_server) = IotRewardShare::file_sink(
             store_base_path,
             file_upload.clone(),
@@ -103,7 +69,6 @@ impl Cmd {
         )
         .await?;
 
-        // Reward manifest
         let (reward_manifests_sink, reward_manifests_sink_server) = RewardManifest::file_sink(
             store_base_path,
             file_upload.clone(),
@@ -132,29 +97,8 @@ impl Cmd {
         )?;
 
         // *
-        // setup entropy requirements
+        // packet loader (data-transfer DC rewards)
         // *
-        let max_lookback_age = settings.loader_window_max_lookback_age;
-        let entropy_interval = settings.entropy_interval;
-        let (entropy_loader_receiver, entropy_loader_server) = file_source::continuous_source()
-            .state(pool.clone())
-            .bucket_client(settings.file_store_clients.entropy_input.connect().await)
-            .prefix(FileType::EntropyReport.to_string())
-            .lookback_max(max_lookback_age)
-            .poll_duration(entropy_interval)
-            .offset(entropy_interval * 2)
-            .create()
-            .await?;
-
-        let entropy_loader = EntropyLoader {
-            pool: pool.clone(),
-            file_receiver: entropy_loader_receiver,
-        };
-
-        // *
-        // setup the packet loader requirements
-        // *
-
         let (non_rewardable_packet_sink, non_rewardable_packet_sink_server) =
             NonRewardablePacket::file_sink(
                 store_base_path,
@@ -165,6 +109,7 @@ impl Cmd {
             )
             .await?;
 
+        let max_lookback_age = settings.loader_window_max_lookback_age;
         let packet_interval = settings.packet_interval;
         let (pk_loader_receiver, pk_loader_server) = file_source::continuous_source()
             .state(pool.clone())
@@ -178,112 +123,20 @@ impl Cmd {
 
         let packet_loader = packet_loader::PacketLoader::new(
             pool.clone(),
-            gateway_cache.clone(),
+            gateway_cache,
             pk_loader_receiver,
             non_rewardable_packet_sink,
         );
-
-        // *
-        // setup the purger requirements
-        // *
-        let (purger_invalid_beacon_sink, purger_invalid_beacon_sink_server) =
-            LoraInvalidBeaconReportV1::file_sink(
-                store_base_path,
-                file_upload.clone(),
-                FileSinkCommitStrategy::Manual,
-                FileSinkRollTime::Default,
-                env!("CARGO_PKG_NAME"),
-            )
-            .await?;
-
-        let (purger_invalid_witness_sink, purger_invalid_witness_sink_server) =
-            LoraInvalidWitnessReportV1::file_sink(
-                store_base_path,
-                file_upload.clone(),
-                FileSinkCommitStrategy::Manual,
-                FileSinkRollTime::Default,
-                env!("CARGO_PKG_NAME"),
-            )
-            .await?;
-
-        let purger = purger::Purger::new(
-            settings.base_stale_period,
-            settings.beacon_stale_period,
-            settings.witness_stale_period,
-            settings.entropy_stale_period,
-            pool.clone(),
-            purger_invalid_beacon_sink,
-            purger_invalid_witness_sink,
-        )
-        .await?;
-
-        // *
-        // setup the runner requirements
-        // *
-
-        let (runner_invalid_beacon_sink, runner_invalid_beacon_sink_server) =
-            LoraInvalidBeaconReportV1::file_sink(
-                store_base_path,
-                file_upload.clone(),
-                FileSinkCommitStrategy::Automatic,
-                FileSinkRollTime::Duration(Duration::from_secs(5 * 60)),
-                env!("CARGO_PKG_NAME"),
-            )
-            .await?;
-
-        let (runner_invalid_witness_sink, runner_invalid_witness_sink_server) =
-            LoraInvalidWitnessReportV1::file_sink(
-                store_base_path,
-                file_upload.clone(),
-                FileSinkCommitStrategy::Automatic,
-                FileSinkRollTime::Duration(Duration::from_secs(5 * 60)),
-                env!("CARGO_PKG_NAME"),
-            )
-            .await?;
-
-        let (runner_poc_sink, runner_poc_sink_server) = LoraPocV1::file_sink(
-            store_base_path,
-            file_upload.clone(),
-            FileSinkCommitStrategy::Automatic,
-            FileSinkRollTime::Duration(Duration::from_secs(2 * 60)),
-            env!("CARGO_PKG_NAME"),
-        )
-        .await?;
-
-        let runner = runner::Runner::from_settings(
-            settings,
-            iot_config_client.clone(),
-            pool.clone(),
-            gateway_cache.clone(),
-            runner_invalid_beacon_sink,
-            runner_invalid_witness_sink,
-            runner_poc_sink,
-            density_scaler.hex_density_map.clone(),
-            witness_updater,
-        )
-        .await?;
 
         TaskManager::builder()
             .add_task(file_upload_server)
             .add_task(gateway_rewards_sink_server)
             .add_task(reward_manifests_sink_server)
             .add_task(non_rewardable_packet_sink_server)
-            .add_task(purger_invalid_beacon_sink_server)
-            .add_task(purger_invalid_witness_sink_server)
-            .add_task(runner_invalid_beacon_sink_server)
-            .add_task(runner_invalid_witness_sink_server)
-            .add_task(witness_updater_server)
-            .add_task(runner_poc_sink_server)
             .add_task(price_daemon)
-            .add_task(density_scaler)
             .add_task(gateway_updater_server)
-            .add_task(purger)
-            .add_task(runner)
-            .add_task(entropy_loader)
             .add_task(packet_loader)
-            .add_task(loader)
             .add_task(pk_loader_server)
-            .add_task(entropy_loader_server)
             .add_task(rewarder)
             .build()
             .start()

@@ -1,0 +1,57 @@
+# Local settings for HIP-0149 transition testing.
+#
+# Prerequisites:
+#   DUMP_FILE=./iot_verifier_prod.dump docker compose -f hip149/docker-compose.yml up -d
+#
+# BASIC mode (rewarder only, iot_config + price point at prod):
+#   AWS_ACCESS_KEY_ID=admin \
+#   AWS_SECRET_ACCESS_KEY=admin \
+#   VERIFY_IOT_CONFIG_CLIENT__SIGNING_KEYPAIR=/path/to/signing_keypair.bin \
+#   VERIFY_IOT_CONFIG_CLIENT__CONFIG_PUBKEY=<config_service_pubkey> \
+#   ./target/release/iot_verifier -c hip149/iot-verifier-settings.toml server
+#
+# FULL mode (--profile full compose stack, everything local):
+#   AWS_ACCESS_KEY_ID=admin \
+#   AWS_SECRET_ACCESS_KEY=admin \
+#   VERIFY_IOT_CONFIG_CLIENT__SIGNING_KEYPAIR=/path/to/signing_keypair.bin \
+#   VERIFY_IOT_CONFIG_CLIENT__CONFIG_PUBKEY=<iot_config_local_pubkey> \
+#   ./target/release/iot_verifier -c hip149/iot-verifier-settings-full.toml server
+
+log = "iot_verifier=debug,file_store=info"
+
+[file_store_clients]
+cache = "/tmp/iot_verifier_hip149_cache"
+
+[file_store_clients.output]
+bucket = "iot-verifier-rewards"
+endpoint = "http://localhost:9100"
+region = "us-east-1"
+
+[file_store_clients.packet_input]
+# PacketLoader reads packet files from here. For a rewarder-only test the
+# bucket can be the same as output — it will find no new files and skip.
+bucket = "iot-verifier-rewards"
+endpoint = "http://localhost:9100"
+region = "us-east-1"
+
+[database]
+url = "postgresql://postgres:postgres@localhost:5433/iot_verifier_hip149_test"
+
+[iot_config_client]
+# BASIC mode: point at prod config endpoint.
+# FULL mode: override via env var VERIFY_IOT_CONFIG_CLIENT__URL=http://localhost:9200
+url = "https://config.iot.mainnet.helium.io:6080"
+signing_keypair = "/path/to/signing_keypair.bin"   # TODO: your signing key path
+config_pubkey = ""                                  # TODO: config service pubkey
+
+[price_tracker]
+price_duration_minutes = 10
+
+[price_tracker.bucket]
+# BASIC mode: point at prod price oracle bucket on real AWS.
+# FULL mode: override via env var to use local RustFS (see iot-verifier-settings-full.toml).
+bucket = "mainnet-price-oracle-bucket"   # TODO: actual prod bucket name
+region = "us-west-2"
+
+[metrics]
+endpoint = ""

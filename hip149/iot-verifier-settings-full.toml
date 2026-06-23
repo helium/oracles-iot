@@ -1,0 +1,57 @@
+# Local settings for HIP-0149 FULL mode — everything runs locally.
+#
+# Prerequisites:
+#   DUMP_FILE=./iot_verifier_prod.dump \
+#   CONFIG_DB_DUMP=./iot_config_prod.dump \
+#   METADATA_DB_DUMP=./iot_config_metadata.dump \
+#   IOT_CONFIG_KEYPAIR=./iot_config_keypair.bin \
+#   IOT_CONFIG_ADMIN=<admin_b58_pubkey> \
+#     docker compose -f hip149/docker-compose.yml --profile full up -d
+#
+# Run (from repo root):
+#   AWS_ACCESS_KEY_ID=admin \
+#   AWS_SECRET_ACCESS_KEY=admin \
+#   VERIFY_IOT_CONFIG_CLIENT__SIGNING_KEYPAIR=/path/to/signing_keypair.bin \
+#   VERIFY_IOT_CONFIG_CLIENT__CONFIG_PUBKEY=<local_iot_config_pubkey> \
+#   ./target/release/iot_verifier -c hip149/iot-verifier-settings-full.toml server
+
+log = "iot_verifier=debug,file_store=info,packet_loader=debug"
+
+[file_store_clients]
+cache = "/tmp/iot_verifier_hip149_cache"
+
+[file_store_clients.output]
+bucket = "iot-verifier-rewards"
+endpoint = "http://localhost:9100"
+region = "us-east-1"
+
+[file_store_clients.packet_input]
+# HPR packet files are uploaded here by the ingest service (or seeded manually).
+bucket = "packet-ingest"
+endpoint = "http://localhost:9100"
+region = "us-east-1"
+
+[database]
+url = "postgresql://postgres:postgres@localhost:5433/iot_verifier_hip149_test"
+
+[iot_config_client]
+# Local iot_config running on port 9200 in the full compose stack.
+# config_pubkey = public key of iot-config's keypair (matches IOT_CONFIG_KEYPAIR/IOT_CONFIG_ADMIN in seed.sh).
+# signing_keypair = same keypair used for iot-config (verifier signs requests; iot-config auth_cache accepts it).
+# Re-run seed.sh and update these values if you regenerate the keypair.
+url = "http://localhost:9200"
+signing_keypair = "/tmp/test_keypair.bin"
+config_pubkey = "13q6ad9TFpXWyoZwPFcRsZYgK5f3bdosj3knuB5ARBeuZ2XnvP3"
+
+[price_tracker]
+# price service writes price_report files to price-reports bucket every 60s.
+# Increase duration so stale tolerance covers the initial startup delay.
+price_duration_minutes = 30
+
+[price_tracker.bucket]
+bucket = "price-reports"
+endpoint = "http://localhost:9100"
+region = "us-east-1"
+
+[metrics]
+endpoint = "0.0.0.0:19001"
