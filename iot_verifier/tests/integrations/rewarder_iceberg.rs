@@ -15,8 +15,7 @@ use helium_iceberg::IcebergTestHarness;
 use helium_proto::{services::poc_lora::IotRewardShare, RewardManifest};
 use iot_verifier::{
     iceberg::{gateway_reward, operational_reward, unallocated_reward, RewardWriters, NAMESPACE},
-    poc_report::ReportType,
-    reward_share::{GatewayDCShare, GatewayPocShare},
+    reward_share::GatewayDCShare,
     rewarder::Rewarder,
 };
 use prost::Message;
@@ -26,7 +25,6 @@ use std::time::Duration;
 use trino_rust_client::Trino;
 
 const HOTSPOT_1: &str = "112NqN2WWMwtK29PMzRby62fDydBJfsCLkCAf392stdok48ovNT6";
-const HOTSPOT_2: &str = "11uJHS2YaEWJqgqC7yza9uvSmpv5FWoMQXiP8WbxBGgNUmifUJf";
 
 #[sqlx::test]
 async fn reward_writes_gateway_rows_to_iceberg(pool: PgPool) -> anyhow::Result<()> {
@@ -53,10 +51,9 @@ async fn reward_writes_gateway_rows_to_iceberg(pool: PgPool) -> anyhow::Result<(
     .await?;
     assert!(!gw.is_empty(), "gateway iceberg table should not be empty");
     assert!(
-        gw.iter().any(
-            |r| r.hotspot_key == HOTSPOT_1 && (r.beacon_amount > 0 || r.dc_transfer_amount > 0)
-        ),
-        "expected a row for HOTSPOT_1 with non-zero amounts, got {gw:?}"
+        gw.iter()
+            .any(|r| r.hotspot_key == HOTSPOT_1 && r.dc_transfer_amount > 0),
+        "expected a row for HOTSPOT_1 with non-zero dc_transfer_amount, got {gw:?}"
     );
 
     Ok(())
@@ -267,33 +264,12 @@ async fn build_rewarder(
     Ok((rewarder, rewards_drainer, manifests_drainer))
 }
 
-/// Minimal POC + DC seed: one beacon for HOTSPOT_1, one witness for HOTSPOT_2,
-/// one DC share for HOTSPOT_1. Enough to produce non-zero `gateway`,
-/// `operational`, and `unallocated` rows from the rewarder.
+/// Minimal DC seed: one DC share for HOTSPOT_1. Enough to produce non-zero
+/// `gateway`, `operational`, and `unallocated` rows from the rewarder.
 async fn seed_minimal(
     ts: DateTime<Utc>,
     txn: &mut Transaction<'_, Postgres>,
 ) -> anyhow::Result<()> {
-    GatewayPocShare {
-        hotspot_key: HOTSPOT_1.parse().unwrap(),
-        reward_type: ReportType::Beacon,
-        reward_timestamp: ts + ChronoDuration::hours(1),
-        hex_scale: dec!(1.0),
-        reward_unit: dec!(1.0),
-        poc_id: "poc_id_1".to_string().encode_to_vec(),
-    }
-    .save(txn)
-    .await?;
-    GatewayPocShare {
-        hotspot_key: HOTSPOT_2.parse().unwrap(),
-        reward_type: ReportType::Witness,
-        reward_timestamp: ts + ChronoDuration::hours(1),
-        hex_scale: dec!(1.0),
-        reward_unit: dec!(1.0),
-        poc_id: "poc_id_1".to_string().encode_to_vec(),
-    }
-    .save(txn)
-    .await?;
     GatewayDCShare {
         hotspot_key: HOTSPOT_1.parse().unwrap(),
         reward_timestamp: ts + ChronoDuration::hours(1),

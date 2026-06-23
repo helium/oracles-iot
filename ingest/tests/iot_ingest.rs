@@ -1,33 +1,33 @@
 use std::net::{SocketAddr, TcpListener};
 
 use backon::{ExponentialBuilder, Retryable};
-use file_store::file_sink::{FileSinkClient, Message as SinkMessage};
 use helium_crypto::{KeyTag, Keypair, Network, PublicKey, Sign};
 use helium_proto::services::poc_lora::{
     lora_stream_request_v1::Request as StreamRequest,
     lora_stream_response_v1::Response as StreamResponse, poc_lora_client::PocLoraClient,
-    LoraBeaconIngestReportV1, LoraBeaconReportReqV1, LoraStreamRequestV1, LoraStreamResponseV1,
-    LoraStreamSessionInitV1, LoraStreamSessionOfferV1, LoraWitnessIngestReportV1,
-    LoraWitnessReportReqV1,
+    LoraBeaconReportReqV1, LoraStreamRequestV1, LoraStreamResponseV1, LoraStreamSessionInitV1,
+    LoraStreamSessionOfferV1, LoraWitnessReportReqV1,
 };
 use ingest::server_iot::GrpcServer;
 use prost::Message;
 use rand::rngs::OsRng;
 use task_manager::TaskManager;
-use tokio::{sync::mpsc::error::TryRecvError, task::LocalSet, time::timeout};
+use tokio::{task::LocalSet, time::timeout};
 use tokio_stream::{wrappers::ReceiverStream, StreamExt};
 use tonic::{transport::Channel, Streaming};
 
+/// Beacon/witness data is now dropped on the floor (POC retired). These tests
+/// verify the session-management mechanics still work correctly: sessions open
+/// and close as expected, and bad signatures / wrong pubkeys terminate the stream.
+
 #[tokio::test]
 async fn initialize_session_and_send_beacon_and_witness() {
-    let (beacon_client, mut beacons) = create_file_sink();
-    let (witness_client, mut witnesses) = create_file_sink();
     let addr = get_socket_addr().expect("socket addr");
 
     LocalSet::new()
         .run_until(async move {
             tokio::task::spawn_local(async move {
-                let server = create_test_server(addr, beacon_client, witness_client, None, None);
+                let server = create_test_server(addr, None, None);
                 TaskManager::builder()
                     .add_task(server)
                     .build()
@@ -50,37 +50,23 @@ async fn initialize_session_and_send_beacon_and_witness() {
                 )
                 .await;
 
+            // Beacons and witnesses are silently dropped; stream remains open.
             client.send_beacon(pub_key.public_key(), &session_key).await;
-
-            let beacon_ingest_report = beacons.receive_beacon().await;
-            assert_eq!(
-                beacon_ingest_report.report.unwrap().pub_key,
-                <Vec<u8>>::from(pub_key.public_key())
-            );
-
             client
                 .send_witness(pub_key.public_key(), &session_key)
                 .await;
-
-            let witness_ingest_report = witnesses.receive_witness().await;
-            assert_eq!(
-                witness_ingest_report.report.unwrap().pub_key,
-                <Vec<u8>>::from(pub_key.public_key())
-            );
         })
         .await;
 }
 
 #[tokio::test]
 async fn stream_stops_after_incorrectly_signed_init_request() {
-    let (beacon_client, _) = create_file_sink();
-    let (witness_client, _) = create_file_sink();
     let addr = get_socket_addr().expect("socket addr");
 
     LocalSet::new()
         .run_until(async move {
             tokio::task::spawn_local(async move {
-                let server = create_test_server(addr, beacon_client, witness_client, None, None);
+                let server = create_test_server(addr, None, None);
                 TaskManager::builder()
                     .add_task(server)
                     .build()
@@ -111,14 +97,12 @@ async fn stream_stops_after_incorrectly_signed_init_request() {
 
 #[tokio::test]
 async fn stream_stops_after_incorrectly_signed_beacon() {
-    let (beacon_client, beacons) = create_file_sink();
-    let (witness_client, _) = create_file_sink();
     let addr = get_socket_addr().expect("socket addr");
 
     LocalSet::new()
         .run_until(async move {
             tokio::task::spawn_local(async move {
-                let server = create_test_server(addr, beacon_client, witness_client, None, None);
+                let server = create_test_server(addr, None, None);
                 TaskManager::builder()
                     .add_task(server)
                     .build()
@@ -145,21 +129,18 @@ async fn stream_stops_after_incorrectly_signed_beacon() {
             client.send_beacon(pub_key.public_key(), &pub_key).await;
 
             client.assert_closed().await;
-            beacons.assert_no_messages();
         })
         .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn stream_stops_after_incorrect_beacon_pubkey() {
-    let (beacon_client, beacons) = create_file_sink();
-    let (witness_client, _) = create_file_sink();
     let addr = get_socket_addr().expect("socket addr");
 
     LocalSet::new()
         .run_until(async move {
             tokio::task::spawn_local(async move {
-                let server = create_test_server(addr, beacon_client, witness_client, None, None);
+                let server = create_test_server(addr, None, None);
                 TaskManager::builder()
                     .add_task(server)
                     .build()
@@ -189,21 +170,18 @@ async fn stream_stops_after_incorrect_beacon_pubkey() {
                 .await;
 
             client.assert_closed().await;
-            beacons.assert_no_messages();
         })
         .await;
 }
 
 #[tokio::test]
 async fn stream_stops_after_incorrectly_signed_witness() {
-    let (beacon_client, _) = create_file_sink();
-    let (witness_client, witnesses) = create_file_sink();
     let addr = get_socket_addr().expect("socket addr");
 
     LocalSet::new()
         .run_until(async move {
             tokio::task::spawn_local(async move {
-                let server = create_test_server(addr, beacon_client, witness_client, None, None);
+                let server = create_test_server(addr, None, None);
                 TaskManager::builder()
                     .add_task(server)
                     .build()
@@ -230,21 +208,18 @@ async fn stream_stops_after_incorrectly_signed_witness() {
             client.send_witness(pub_key.public_key(), &pub_key).await;
 
             client.assert_closed().await;
-            witnesses.assert_no_messages();
         })
         .await;
 }
 
 #[tokio::test]
 async fn stream_stops_after_incorrect_witness_pubkey() {
-    let (beacon_client, _) = create_file_sink();
-    let (witness_client, witnesses) = create_file_sink();
     let addr = get_socket_addr().expect("socket addr");
 
     LocalSet::new()
         .run_until(async move {
             tokio::task::spawn_local(async move {
-                let server = create_test_server(addr, beacon_client, witness_client, None, None);
+                let server = create_test_server(addr, None, None);
                 TaskManager::builder()
                     .add_task(server)
                     .build()
@@ -274,21 +249,18 @@ async fn stream_stops_after_incorrect_witness_pubkey() {
                 .await;
 
             client.assert_closed().await;
-            witnesses.assert_no_messages();
         })
         .await;
 }
 
 #[tokio::test]
-async fn stream_stop_if_client_attempts_to_initiliaze_2nd_session() {
-    let (beacon_client, mut beacons) = create_file_sink();
-    let (witness_client, _) = create_file_sink();
+async fn stream_stop_if_client_attempts_to_initialize_2nd_session() {
     let addr = get_socket_addr().expect("socket addr");
 
     LocalSet::new()
         .run_until(async move {
             tokio::task::spawn_local(async move {
-                let server = create_test_server(addr, beacon_client, witness_client, None, None);
+                let server = create_test_server(addr, None, None);
                 TaskManager::builder()
                     .add_task(server)
                     .build()
@@ -311,14 +283,10 @@ async fn stream_stop_if_client_attempts_to_initiliaze_2nd_session() {
                 )
                 .await;
 
+            // Beacon is silently dropped; stream remains open.
             client.send_beacon(pub_key.public_key(), &session_key).await;
 
-            let beacon_ingest_report = beacons.receive_beacon().await;
-            assert_eq!(
-                beacon_ingest_report.report.unwrap().pub_key,
-                <Vec<u8>>::from(pub_key.public_key())
-            );
-
+            // Attempting a second session init should close the stream.
             client
                 .send_init(
                     offer,
@@ -335,15 +303,12 @@ async fn stream_stop_if_client_attempts_to_initiliaze_2nd_session() {
 
 #[tokio::test]
 async fn stream_stops_if_init_not_sent_within_timeout() {
-    let (beacon_client, _) = create_file_sink();
-    let (witness_client, _) = create_file_sink();
     let addr = get_socket_addr().expect("socket addr");
 
     LocalSet::new()
         .run_until(async move {
             tokio::task::spawn_local(async move {
-                let server =
-                    create_test_server(addr, beacon_client, witness_client, Some(500), None);
+                let server = create_test_server(addr, Some(500), None);
                 TaskManager::builder()
                     .add_task(server)
                     .build()
@@ -361,15 +326,12 @@ async fn stream_stops_if_init_not_sent_within_timeout() {
 
 #[tokio::test]
 async fn stream_stops_on_session_timeout() {
-    let (beacon_client, mut beacons) = create_file_sink();
-    let (witness_client, _) = create_file_sink();
     let addr = get_socket_addr().expect("socket addr");
 
     LocalSet::new()
         .run_until(async move {
             tokio::task::spawn_local(async move {
-                let server =
-                    create_test_server(addr, beacon_client, witness_client, Some(500), Some(900));
+                let server = create_test_server(addr, Some(500), Some(900));
                 TaskManager::builder()
                     .add_task(server)
                     .build()
@@ -392,63 +354,12 @@ async fn stream_stops_on_session_timeout() {
                 )
                 .await;
 
+            // Beacon silently dropped; session timeout will close the stream.
             client.send_beacon(pub_key.public_key(), &session_key).await;
-
-            let beacon_ingest_report = beacons.receive_beacon().await;
-            assert_eq!(
-                beacon_ingest_report.report.unwrap().pub_key,
-                <Vec<u8>>::from(pub_key.public_key())
-            );
 
             client.assert_closed().await;
         })
         .await;
-}
-
-struct MockFileSinkReceiver<T> {
-    receiver: tokio::sync::mpsc::Receiver<SinkMessage<T>>,
-}
-
-impl<T> MockFileSinkReceiver<T> {
-    async fn receive(&mut self) -> SinkMessage<T> {
-        match timeout(seconds(2), self.receiver.recv()).await {
-            Ok(Some(msg)) => msg,
-            Ok(None) => panic!("server closed connection while waiting for message"),
-            Err(_) => panic!("timeout while waiting for message"),
-        }
-    }
-
-    fn assert_no_messages(mut self) {
-        let Err(TryRecvError::Empty) = self.receiver.try_recv() else {
-            panic!("receiver should have been empty")
-        };
-    }
-}
-
-impl MockFileSinkReceiver<LoraBeaconIngestReportV1> {
-    async fn receive_beacon(&mut self) -> LoraBeaconIngestReportV1 {
-        match self.receive().await {
-            SinkMessage::Data(_, msg) => msg,
-            _ => panic!("invalid beacon message"),
-        }
-    }
-}
-
-impl MockFileSinkReceiver<LoraWitnessIngestReportV1> {
-    async fn receive_witness(&mut self) -> LoraWitnessIngestReportV1 {
-        match self.receive().await {
-            SinkMessage::Data(_, msg) => msg,
-            _ => panic!("invalid witness message"),
-        }
-    }
-}
-
-fn create_file_sink<T: prost::Message>() -> (FileSinkClient<T>, MockFileSinkReceiver<T>) {
-    let (tx, rx) = tokio::sync::mpsc::channel(5);
-    (
-        FileSinkClient::new(tx, "metric"),
-        MockFileSinkReceiver { receiver: rx },
-    )
 }
 
 async fn connect_and_stream(socket_addr: SocketAddr) -> TestClient {
@@ -575,16 +486,12 @@ impl TestClient {
 
 fn create_test_server(
     socket_addr: SocketAddr,
-    beacon_file_sink: FileSinkClient<LoraBeaconIngestReportV1>,
-    witness_file_sink: FileSinkClient<LoraWitnessIngestReportV1>,
     offer_timeout: Option<u64>,
     timeout: Option<u64>,
 ) -> GrpcServer {
     let offer_timeout = offer_timeout.unwrap_or(5000);
     let timeout = timeout.unwrap_or(30 * 60000);
     GrpcServer {
-        beacon_report_sink: beacon_file_sink,
-        witness_report_sink: witness_file_sink,
         required_network: Network::MainNet,
         address: socket_addr,
         session_key_offer_timeout: std::time::Duration::from_millis(offer_timeout),

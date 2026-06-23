@@ -1,22 +1,22 @@
-use anyhow::{Error, Result};
+extern crate tls_init;
+
+mod settings;
+
+use anyhow::Result;
+use chrono::Utc;
 use clap::Parser;
-use file_store::file_upload;
-use file_store_oracles::traits::{FileSinkCommitStrategy, FileSinkRollTime, FileSinkWriteExt};
-use futures_util::TryFutureExt;
-use helium_proto::EntropyReportV1;
-use poc_entropy::{entropy_generator::EntropyGenerator, server::ApiServer, Settings};
-use std::{net::SocketAddr, path, time::Duration};
-use tokio::{self, signal};
+use helium_proto::{
+    services::poc_entropy::{EntropyReqV1, PocEntropy, Server as GrpcServer},
+    EntropyReportV1,
+};
+use std::{net::SocketAddr, path};
+use tokio::signal;
+use tonic::{transport, Request, Response, Status};
 
-const ENTROPY_SINK_ROLL_SECS: u64 = 2 * 60;
-
-#[derive(Debug, clap::Parser)]
+#[derive(Debug, Parser)]
 #[clap(version = env!("CARGO_PKG_VERSION"))]
-#[clap(about = "Helium Entropy Server")]
+#[clap(about = "Helium PoC Entropy Server (noop — POC retired per HIP-0149)")]
 pub struct Cli {
-    /// Optional configuration file to use. If present the toml file at the
-    /// given path will be loaded. Environment variables can override the
-    /// settings in the given file.
     #[clap(short = 'c')]
     config: Option<path::PathBuf>,
 
@@ -24,36 +24,18 @@ pub struct Cli {
     cmd: Cmd,
 }
 
-impl Cli {
-    pub async fn run(self) -> Result<()> {
-        let settings = Settings::new(self.config)?;
-        custom_tracing::init(settings.log.clone(), settings.custom_tracing.clone()).await?;
-        self.cmd.run(settings).await
-    }
-}
-
 #[derive(Debug, clap::Subcommand)]
 pub enum Cmd {
     Server(Server),
-}
-
-impl Cmd {
-    pub async fn run(&self, settings: Settings) -> Result<()> {
-        match self {
-            Self::Server(cmd) => cmd.run(&settings).await,
-        }
-    }
 }
 
 #[derive(Debug, clap::Args)]
 pub struct Server {}
 
 impl Server {
-    pub async fn run(&self, settings: &Settings) -> Result<()> {
-        // Install the prometheus metrics exporter
+    async fn run(&self, settings: &settings::Settings) -> Result<()> {
         poc_metrics::start_metrics(&settings.metrics)?;
 
-        // configure shutdown trigger
         let (shutdown_trigger, shutdown) = triggered::trigger();
         let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())?;
         tokio::spawn(async move {
@@ -63,49 +45,49 @@ impl Server {
             }
         });
 
-        // Initialize uploader
-        let store_base_path = path::Path::new(&settings.cache);
-
-        // entropy
-        let mut entropy_generator = EntropyGenerator::new(&settings.source).await?;
-        let entropy_watch = entropy_generator.receiver();
-
-        let file_store_client = settings.file_store.connect().await;
-        let (file_upload, file_upload_server) =
-            file_upload::FileUpload::new(file_store_client, settings.output_bucket.clone()).await;
-        let (entropy_sink, entropy_sink_server) = EntropyReportV1::file_sink(
-            store_base_path,
-            file_upload.clone(),
-            FileSinkCommitStrategy::Automatic,
-            FileSinkRollTime::Duration(Duration::from_secs(ENTROPY_SINK_ROLL_SECS)),
-            env!("CARGO_PKG_NAME"),
-        )
-        .await?;
-
-        // server
         let socket_addr: SocketAddr = settings.listen.parse()?;
-        let api_server = ApiServer::new(socket_addr, entropy_watch).await?;
+        tracing::info!(%socket_addr, "starting noop entropy server (POC retired)");
 
-        tracing::info!("api listening on {}", api_server.socket_addr);
+        transport::Server::builder()
+            .layer(custom_tracing::grpc_layer::new_with_span(make_span))
+            .add_service(GrpcServer::new(NoopEntropyServer))
+            .serve_with_shutdown(socket_addr, shutdown)
+            .await?;
 
-        tokio::try_join!(
-            api_server.run(&shutdown),
-            entropy_generator
-                .run(entropy_sink, &shutdown)
-                .map_err(Error::from),
-            entropy_sink_server
-                .run(shutdown.clone())
-                .map_err(Error::from),
-            file_upload_server
-                .run(shutdown.clone())
-                .map_err(Error::from),
-        )
-        .map(|_| ())
+        Ok(())
     }
+}
+
+struct NoopEntropyServer;
+
+#[tonic::async_trait]
+impl PocEntropy for NoopEntropyServer {
+    async fn entropy(
+        &self,
+        _request: Request<EntropyReqV1>,
+    ) -> Result<Response<EntropyReportV1>, Status> {
+        // POC retired (HIP-0149). Return a valid but empty response so old
+        // gateway firmware that cannot be updated doesn't get connection errors.
+        // Gateways are expected to discard this entropy since beacons are no
+        // longer validated.
+        Ok(Response::new(EntropyReportV1 {
+            data: vec![],
+            timestamp: Utc::now().timestamp() as u64,
+            version: 0,
+        }))
+    }
+}
+
+fn make_span(_request: &http::request::Request<tonic::body::Body>) -> tracing::Span {
+    tracing::info_span!(custom_tracing::DEFAULT_SPAN)
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    cli.run().await
+    let settings = settings::Settings::new(cli.config)?;
+    custom_tracing::init(settings.log.clone(), settings.custom_tracing.clone()).await?;
+    match cli.cmd {
+        Cmd::Server(cmd) => cmd.run(&settings).await,
+    }
 }
