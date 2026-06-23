@@ -1,4 +1,5 @@
 pub mod backfill_rewards;
+pub mod dump;
 pub mod server;
 
 use crate::{backfill, Settings};
@@ -29,6 +30,7 @@ impl Cli {
 pub enum Cmd {
     Server(server::Cmd),
     BackfillRewards(backfill_rewards::Cmd),
+    Dump(dump::Cmd),
 }
 
 impl Cmd {
@@ -42,6 +44,8 @@ impl Cmd {
                 let settings = backfill::settings::Settings::new(config)?;
                 cmd.run(&settings).await
             }
+            // Dump decodes a local store file and needs no settings.
+            Self::Dump(cmd) => cmd.run().await,
         }
     }
 }
