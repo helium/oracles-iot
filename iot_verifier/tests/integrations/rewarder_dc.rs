@@ -24,12 +24,12 @@ async fn test_dc_rewards(pool: PgPool) -> anyhow::Result<()> {
     seed_dc(reward_info.epoch_period.start, &mut txn).await?;
     txn.commit().await?;
 
-    let (dc_underflow, gateway_rewards) = tokio::join!(
+    let (dc_result, gateway_rewards) = tokio::join!(
         rewarder::reward_dc(&pool, &iot_rewards_client, &reward_info, price_info, None),
         receive_expected_rewards(&mut iot_rewards)
     );
 
-    let dc_underflow = dc_underflow?;
+    let (dc_underflow, _dc_bones_per_share) = dc_result?;
     let gateway_rewards = gateway_rewards?;
 
     assert_eq!(
