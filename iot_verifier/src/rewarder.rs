@@ -236,12 +236,9 @@ where
         transaction.commit().await?;
 
         let reward_data = ManifestIotRewardData {
-            poc_bones_per_beacon_reward_share: Some(helium_proto::Decimal {
-                value: "0".to_string(),
-            }),
-            poc_bones_per_witness_reward_share: Some(helium_proto::Decimal {
-                value: "0".to_string(),
-            }),
+            // PoC retired (HIP-0149) — no beacon/witness rewards are emitted.
+            poc_bones_per_beacon_reward_share: None,
+            poc_bones_per_witness_reward_share: None,
             dc_bones_per_share: Some(helium_proto::Decimal {
                 value: dc_bones_per_share.to_string(),
             }),

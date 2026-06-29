@@ -16,9 +16,10 @@ use tokio::{task::LocalSet, time::timeout};
 use tokio_stream::{wrappers::ReceiverStream, StreamExt};
 use tonic::{transport::Channel, Streaming};
 
-/// Beacon/witness data is now dropped on the floor (POC retired). These tests
-/// verify the session-management mechanics still work correctly: sessions open
-/// and close as expected, and bad signatures / wrong pubkeys terminate the stream.
+/// Beacon/witness data is now dropped on the floor (POC retired) without any
+/// validation. These tests verify the session-management mechanics still work:
+/// sessions open and close as expected, a bad SessionInit terminates the stream,
+/// and malformed beacon/witness reports are silently accepted (stream stays open).
 
 #[tokio::test]
 async fn initialize_session_and_send_beacon_and_witness() {
@@ -96,7 +97,7 @@ async fn stream_stops_after_incorrectly_signed_init_request() {
 }
 
 #[tokio::test]
-async fn stream_stops_after_incorrectly_signed_beacon() {
+async fn malformed_signed_beacon_does_not_close_stream() {
     let addr = get_socket_addr().expect("socket addr");
 
     LocalSet::new()
@@ -125,16 +126,16 @@ async fn stream_stops_after_incorrectly_signed_beacon() {
                 )
                 .await;
 
-            // Incorrectly signed by pub_key
+            // Incorrectly signed by pub_key — POC retired, so it's dropped, not rejected.
             client.send_beacon(pub_key.public_key(), &pub_key).await;
 
-            client.assert_closed().await;
+            client.assert_open().await;
         })
         .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn stream_stops_after_incorrect_beacon_pubkey() {
+async fn wrong_pubkey_beacon_does_not_close_stream() {
     let addr = get_socket_addr().expect("socket addr");
 
     LocalSet::new()
@@ -163,19 +164,19 @@ async fn stream_stops_after_incorrect_beacon_pubkey() {
                 )
                 .await;
 
-            // Incorrect pub_key sent
+            // Incorrect pub_key sent — POC retired, so it's dropped, not rejected.
             let other_key = generate_keypair();
             client
                 .send_beacon(other_key.public_key(), &session_key)
                 .await;
 
-            client.assert_closed().await;
+            client.assert_open().await;
         })
         .await;
 }
 
 #[tokio::test]
-async fn stream_stops_after_incorrectly_signed_witness() {
+async fn malformed_signed_witness_does_not_close_stream() {
     let addr = get_socket_addr().expect("socket addr");
 
     LocalSet::new()
@@ -204,16 +205,16 @@ async fn stream_stops_after_incorrectly_signed_witness() {
                 )
                 .await;
 
-            // Incorrectly signed by pub_key
+            // Incorrectly signed by pub_key — POC retired, so it's dropped, not rejected.
             client.send_witness(pub_key.public_key(), &pub_key).await;
 
-            client.assert_closed().await;
+            client.assert_open().await;
         })
         .await;
 }
 
 #[tokio::test]
-async fn stream_stops_after_incorrect_witness_pubkey() {
+async fn wrong_pubkey_witness_does_not_close_stream() {
     let addr = get_socket_addr().expect("socket addr");
 
     LocalSet::new()
@@ -242,13 +243,13 @@ async fn stream_stops_after_incorrect_witness_pubkey() {
                 )
                 .await;
 
-            // Incorrect pub_key
+            // Incorrect pub_key — POC retired, so it's dropped, not rejected.
             let other_key = generate_keypair();
             client
                 .send_witness(other_key.public_key(), &session_key)
                 .await;
 
-            client.assert_closed().await;
+            client.assert_open().await;
         })
         .await;
 }
@@ -403,6 +404,16 @@ impl TestClient {
         let Ok(None) = timeout(seconds(1), self.in_stream.next()).await else {
             panic!("Should have received None to indicate server closed connection")
         };
+    }
+
+    /// The server sends no response for dropped reports, so a still-open stream
+    /// reads as a timeout (neither a close `None` nor an unexpected message).
+    async fn assert_open(&mut self) {
+        match timeout(seconds(1), self.in_stream.next()).await {
+            Err(_) => {}
+            Ok(None) => panic!("stream closed unexpectedly; it should stay open"),
+            Ok(Some(msg)) => panic!("unexpected message on open stream: {msg:?}"),
+        }
     }
 
     async fn send_init(

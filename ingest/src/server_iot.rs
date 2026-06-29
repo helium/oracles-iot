@@ -81,25 +81,12 @@ impl StreamState {
         }
     }
 
-    fn verify_session_pub_key(&self, pub_key_bytes: &[u8]) -> VerifyResult<()> {
-        if self.pub_key_bytes.as_deref() == Some(pub_key_bytes) {
-            Ok(())
-        } else {
-            Err(Status::invalid_argument("invalid public key"))
-        }
-    }
-
     async fn handle_message(&mut self, message: LoraStreamRequestV1) -> Result<(), Status> {
         match message.request {
-            // POC retired — validate pub_key + signature but discard the report
-            Some(StreamRequest::BeaconReport(report)) => self
-                .verify_session_pub_key(&report.pub_key)
-                .and_then(|_| verify_signature(self.session_key.as_ref(), report))
-                .map(|_| ()),
-            Some(StreamRequest::WitnessReport(report)) => self
-                .verify_session_pub_key(&report.pub_key)
-                .and_then(|_| verify_signature(self.session_key.as_ref(), report))
-                .map(|_| ()),
+            // POC retired (HIP-0149) — beacon/witness reports are discarded
+            // without validation; the stream stays open.
+            Some(StreamRequest::BeaconReport(_)) => Ok(()),
+            Some(StreamRequest::WitnessReport(_)) => Ok(()),
             Some(StreamRequest::SessionInit(init)) => verify_public_key(&init.pub_key)
                 .and_then(|pk| verify_network(self.required_network, pk))
                 .and_then(|pk| verify_signature(Some(&pk), init))

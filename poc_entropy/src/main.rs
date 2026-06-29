@@ -49,7 +49,6 @@ impl Server {
         tracing::info!(%socket_addr, "starting noop entropy server (POC retired)");
 
         transport::Server::builder()
-            .layer(custom_tracing::grpc_layer::new_with_span(make_span))
             .add_service(GrpcServer::new(NoopEntropyServer))
             .serve_with_shutdown(socket_addr, shutdown)
             .await?;
@@ -76,10 +75,6 @@ impl PocEntropy for NoopEntropyServer {
             version: 0,
         }))
     }
-}
-
-fn make_span(_request: &http::request::Request<tonic::body::Body>) -> tracing::Span {
-    tracing::info_span!(custom_tracing::DEFAULT_SPAN)
 }
 
 #[tokio::main]
