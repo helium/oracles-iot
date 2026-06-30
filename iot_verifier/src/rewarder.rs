@@ -228,7 +228,12 @@ where
 
         let mut transaction = self.pool.begin().await?;
 
-        GatewayShares::clear_rewarded_shares(&mut transaction, reward_info.epoch_period.end)
+        // Clear shares up to the *start* of this epoch (intentionally not `end`).
+        // Rewarded rows fall in `(start, end]`, so deleting `<= start` removes the
+        // previous epoch's shares while retaining the epoch we just rewarded — they
+        // get cleared on the next run. This keeps the most recently rewarded epoch's
+        // gateway_dc_shares around for one cycle so they can be inspected.
+        GatewayShares::clear_rewarded_shares(&mut transaction, reward_info.epoch_period.start)
             .await?;
 
         save_next_reward_epoch(&mut *transaction, reward_info.epoch_day + 1).await?;
