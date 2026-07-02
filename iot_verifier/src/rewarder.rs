@@ -27,7 +27,6 @@ use iot_config::{
 use price_tracker::PriceProvider;
 use reward_scheduler::Scheduler;
 use rust_decimal::prelude::*;
-use rust_decimal_macros::dec;
 use solana::{SolPubkey, Token};
 use sqlx::{PgExecutor, PgPool, Pool, Postgres};
 use std::{ops::Range, time::Duration};
@@ -58,12 +57,6 @@ pub struct Rewarder<A, P> {
     reward_writers: Option<iceberg::RewardWriters>,
 }
 
-pub struct RewardPocDcDataPoints {
-    beacon_rewards_per_share: Decimal,
-    witness_rewards_per_share: Decimal,
-    dc_transfer_rewards_per_share: Decimal,
-}
-
 impl<A, P> ManagedTask for Rewarder<A, P>
 where
     A: SubDaoEpochRewardInfoResolver<Error = ClientError> + Send + Sync + 'static,
@@ -90,7 +83,6 @@ where
         sub_dao_epoch_reward_client: A,
         reward_writers: Option<iceberg::RewardWriters>,
     ) -> anyhow::Result<Self> {
-        // get the subdao address
         let sub_dao = resolve_subdao_pubkey();
         tracing::info!("Iot SubDao pubkey: {}", sub_dao);
         Ok(Self {
@@ -194,8 +186,9 @@ where
             .is_some()
             .then(RewardRowAccumulator::default);
 
-        // process rewards for poc and dc
-        let poc_dc_shares = reward_poc_and_dc(
+        // process data transfer rewards; returns the DC underflow for the ops fund
+        // and the per-share rate used (for the reward manifest)
+        let (dc_underflow, dc_bones_per_share) = reward_dc(
             &self.pool,
             &self.rewards_sink,
             &reward_info,
@@ -204,13 +197,17 @@ where
         )
         .await?;
 
-        // process rewards for the operational fund
-        reward_operational(&self.rewards_sink, &reward_info, iceberg_rows.as_mut()).await?;
+        // operations fund absorbs its base (37%) plus any DC underflow
+        reward_operational(
+            &self.rewards_sink,
+            &reward_info,
+            dc_underflow,
+            iceberg_rows.as_mut(),
+        )
+        .await?;
 
-        // process rewards for the oracle
         reward_oracles(&self.rewards_sink, &reward_info, iceberg_rows.as_mut()).await?;
 
-        // commit the filesink
         let written_files = self.rewards_sink.commit().await?.await??;
 
         if let (Some(writers), Some(rows)) = (self.reward_writers.as_ref(), iceberg_rows) {
@@ -231,7 +228,11 @@ where
 
         let mut transaction = self.pool.begin().await?;
 
-        // Clear gateway shares table period to end of reward period
+        // Clear shares up to the *start* of this epoch (intentionally not `end`).
+        // Rewarded rows fall in `(start, end]`, so deleting `<= start` removes the
+        // previous epoch's shares while retaining the epoch we just rewarded — they
+        // get cleared on the next run. This keeps the most recently rewarded epoch's
+        // gateway_dc_shares around for one cycle so they can be inspected.
         GatewayShares::clear_rewarded_shares(&mut transaction, reward_info.epoch_period.start)
             .await?;
 
@@ -239,16 +240,12 @@ where
 
         transaction.commit().await?;
 
-        // now that the db has been purged, safe to write out the manifest
         let reward_data = ManifestIotRewardData {
-            poc_bones_per_beacon_reward_share: Some(helium_proto::Decimal {
-                value: poc_dc_shares.beacon_rewards_per_share.to_string(),
-            }),
-            poc_bones_per_witness_reward_share: Some(helium_proto::Decimal {
-                value: poc_dc_shares.witness_rewards_per_share.to_string(),
-            }),
+            // PoC retired (HIP-0149) — no beacon/witness rewards are emitted.
+            poc_bones_per_beacon_reward_share: None,
+            poc_bones_per_witness_reward_share: None,
             dc_bones_per_share: Some(helium_proto::Decimal {
-                value: poc_dc_shares.dc_transfer_rewards_per_share.to_string(),
+                value: dc_bones_per_share.to_string(),
             }),
             token: IotRewardToken::Hnt as i32,
         };
@@ -275,20 +272,7 @@ where
         &self,
         reward_period: &Range<DateTime<Utc>>,
     ) -> anyhow::Result<bool> {
-        // Check if we have gateway shares past the end of the reward period
         if reward_period.end >= self.disable_complete_data_checks_until().await? {
-            if sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM gateway_shares WHERE reward_timestamp >= $1",
-            )
-            .bind(reward_period.end)
-            .fetch_one(&self.pool)
-            .await?
-                == 0
-            {
-                tracing::info!("No gateway_shares found past reward period");
-                return Ok(false);
-            }
-
             if sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM gateway_dc_shares WHERE reward_timestamp >= $1",
             )
@@ -315,38 +299,33 @@ where
         .ok_or(db_store::Error::DecodeError)
     }
 }
-pub async fn reward_poc_and_dc(
+
+/// Distribute data-transfer rewards. Returns the amount of the DC reward
+/// allocation that was not consumed (underflow), which the caller passes to
+/// `reward_operational` for absorption into the Operations Fund.
+pub async fn reward_dc(
     pool: &Pool<Postgres>,
     rewards_sink: &file_sink::FileSinkClient<proto::IotRewardShare>,
     reward_info: &EpochRewardInfo,
     price_info: PriceInfo,
     mut iceberg_rows: Option<&mut RewardRowAccumulator>,
-) -> anyhow::Result<RewardPocDcDataPoints> {
+) -> anyhow::Result<(Decimal, Decimal)> {
     let reward_shares =
         reward_share::aggregate_reward_shares(pool, &reward_info.epoch_period).await?;
-    let gateway_shares = GatewayShares::new(reward_shares)?;
-    let (beacon_rewards_per_share, witness_rewards_per_share, dc_transfer_rewards_per_share) =
-        gateway_shares
-            .calculate_rewards_per_share(reward_info.epoch_emissions, price_info)
-            .await?;
+    let gateway_shares = GatewayShares::new(reward_shares);
+    let dc_transfer_rewards_per_share = gateway_shares
+        .calculate_rewards_per_share(reward_info.epoch_emissions, price_info)
+        .await?;
 
-    // get the total poc and dc rewards for the period
-    let (total_beacon_rewards, total_witness_rewards) =
-        reward_share::get_scheduled_poc_tokens(reward_info.epoch_emissions, dec!(0.0));
     let total_dc_rewards = reward_share::get_scheduled_dc_tokens(reward_info.epoch_emissions);
-    let total_poc_dc_reward_allocation =
-        total_beacon_rewards + total_witness_rewards + total_dc_rewards;
 
     let start_period_secs = reward_info.epoch_period.start.encode_timestamp();
     let end_period_secs = reward_info.epoch_period.end.encode_timestamp();
 
-    let mut allocated_gateway_rewards = 0_u64;
-    for (gateway_reward_amount, reward_share) in gateway_shares.into_reward_shares(
-        &reward_info.epoch_period,
-        beacon_rewards_per_share,
-        witness_rewards_per_share,
-        dc_transfer_rewards_per_share,
-    ) {
+    let mut allocated_dc_rewards = 0_u64;
+    for (gateway_reward_amount, reward_share) in
+        gateway_shares.into_reward_shares(&reward_info.epoch_period, dc_transfer_rewards_per_share)
+    {
         if let Some(rows) = iceberg_rows.as_mut() {
             if let Some(ProtoReward::GatewayReward(ref gw)) = reward_share.reward {
                 if let Ok(row) =
@@ -356,41 +335,33 @@ pub async fn reward_poc_and_dc(
                 }
             }
         }
-        rewards_sink
-            .write(reward_share, [])
-            .await?
-            // Await the returned oneshot to ensure we wrote the file
-            .await??;
-        allocated_gateway_rewards += gateway_reward_amount;
+        rewards_sink.write(reward_share, []).await?.await??;
+        allocated_dc_rewards += gateway_reward_amount;
     }
-    // write out any unallocated poc reward
-    let unallocated_poc_reward_amount = (total_poc_dc_reward_allocation
-        - Decimal::from(allocated_gateway_rewards))
-    .round_dp_with_strategy(0, RoundingStrategy::ToZero)
-    .to_u64()
-    .unwrap_or(0);
-    write_unallocated_reward(
-        rewards_sink,
-        UnallocatedRewardType::Poc,
-        unallocated_poc_reward_amount,
-        &reward_info.epoch_period,
-        iceberg_rows,
-    )
-    .await?;
-    Ok(RewardPocDcDataPoints {
-        beacon_rewards_per_share,
-        witness_rewards_per_share,
-        dc_transfer_rewards_per_share,
-    })
+
+    // DC underflow = scheduled DC allocation minus what was actually distributed
+    let dc_underflow = (total_dc_rewards - Decimal::from(allocated_dc_rewards))
+        .max(Decimal::ZERO)
+        .round_dp_with_strategy(0, RoundingStrategy::ToZero);
+
+    tracing::info!(
+        %total_dc_rewards,
+        %allocated_dc_rewards,
+        %dc_underflow,
+        "data transfer rewards complete"
+    );
+
+    Ok((dc_underflow, dc_transfer_rewards_per_share))
 }
 
 pub async fn reward_operational(
     rewards_sink: &file_sink::FileSinkClient<proto::IotRewardShare>,
     reward_info: &EpochRewardInfo,
+    dc_underflow: Decimal,
     mut iceberg_rows: Option<&mut RewardRowAccumulator>,
 ) -> anyhow::Result<()> {
     let total_operational_rewards =
-        reward_share::get_scheduled_ops_fund_tokens(reward_info.epoch_emissions);
+        reward_share::get_scheduled_ops_fund_tokens(reward_info.epoch_emissions, dc_underflow);
     let allocated_operational_rewards = total_operational_rewards
         .round_dp_with_strategy(0, RoundingStrategy::ToZero)
         .to_u64()
@@ -418,25 +389,6 @@ pub async fn reward_operational(
         )
         .await?
         .await??;
-    // write out any unallocated operation rewards
-    // which for the operational fund can only relate to rounding issue
-    // in practice this should always be zero as there can be a max of
-    // one bone lost due to rounding when going from decimal to u64
-    // but we run it anyway and if it is indeed zero nothing gets
-    // written out anyway
-    let unallocated_operation_reward_amount = (total_operational_rewards
-        - Decimal::from(allocated_operational_rewards))
-    .round_dp_with_strategy(0, RoundingStrategy::ToZero)
-    .to_u64()
-    .unwrap_or(0);
-    write_unallocated_reward(
-        rewards_sink,
-        UnallocatedRewardType::Operation,
-        unallocated_operation_reward_amount,
-        &reward_info.epoch_period,
-        iceberg_rows,
-    )
-    .await?;
     Ok(())
 }
 
@@ -495,6 +447,7 @@ async fn write_unallocated_reward(
     };
     Ok(())
 }
+
 pub async fn next_reward_epoch(db: &Pool<Postgres>) -> db_store::Result<u64> {
     meta::fetch(db, "next_reward_epoch").await
 }

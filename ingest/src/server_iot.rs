@@ -1,16 +1,13 @@
 use crate::settings::Settings;
 use anyhow::{Error, Result};
 use chrono::Utc;
-use file_store::{file_sink::FileSinkClient, file_upload};
-use file_store_oracles::traits::{FileSinkCommitStrategy, FileSinkRollTime, FileSinkWriteExt};
 use futures::{future::TryFutureExt, Stream, StreamExt};
 use helium_crypto::{Network, PublicKey};
 use helium_proto::services::poc_lora::{
     self, lora_stream_request_v1::Request as StreamRequest,
-    lora_stream_response_v1::Response as StreamResponse, LoraBeaconIngestReportV1,
-    LoraBeaconReportReqV1, LoraBeaconReportRespV1, LoraStreamRequestV1, LoraStreamResponseV1,
-    LoraStreamSessionInitV1, LoraStreamSessionOfferV1, LoraWitnessIngestReportV1,
-    LoraWitnessReportReqV1, LoraWitnessReportRespV1,
+    lora_stream_response_v1::Response as StreamResponse, LoraBeaconReportReqV1,
+    LoraBeaconReportRespV1, LoraStreamRequestV1, LoraStreamResponseV1, LoraStreamSessionInitV1,
+    LoraStreamSessionOfferV1, LoraWitnessReportReqV1, LoraWitnessReportRespV1,
 };
 use helium_proto_crypto::MsgVerify;
 use std::{convert::TryFrom, net::SocketAddr, time::Duration};
@@ -27,22 +24,18 @@ type Nonce = [u8; 32];
 
 #[derive(Debug)]
 struct StreamState {
-    beacon_report_sink: FileSinkClient<LoraBeaconIngestReportV1>,
-    witness_report_sink: FileSinkClient<LoraWitnessIngestReportV1>,
     required_network: Network,
     pub_key_bytes: Option<Vec<u8>>,
     session_key: Option<PublicKey>,
     timeout: Instant,
     nonce: Option<Nonce>,
-    session_key_offer_timeout: std::time::Duration,
-    session_key_timeout: std::time::Duration,
+    session_key_offer_timeout: Duration,
+    session_key_timeout: Duration,
 }
 
 impl StreamState {
     fn new(server: &GrpcServer) -> StreamState {
         StreamState {
-            beacon_report_sink: server.beacon_report_sink.clone(),
-            witness_report_sink: server.witness_report_sink.clone(),
             required_network: server.required_network,
             pub_key_bytes: None,
             session_key: None,
@@ -89,28 +82,11 @@ impl StreamState {
     }
 
     async fn handle_message(&mut self, message: LoraStreamRequestV1) -> Result<(), Status> {
-        let timestamp = Utc::now().timestamp_millis() as u64;
         match message.request {
-            Some(StreamRequest::BeaconReport(report)) => {
-                handle_beacon_report(
-                    &self.beacon_report_sink,
-                    timestamp,
-                    report,
-                    self.session_key.as_ref(),
-                    self.pub_key_bytes.as_deref(),
-                )
-                .await
-            }
-            Some(StreamRequest::WitnessReport(report)) => {
-                handle_witness_report(
-                    &self.witness_report_sink,
-                    timestamp,
-                    report,
-                    self.session_key.as_ref(),
-                    self.pub_key_bytes.as_deref(),
-                )
-                .await
-            }
+            // POC retired (HIP-0149) — beacon/witness reports are discarded
+            // without validation; the stream stays open.
+            Some(StreamRequest::BeaconReport(_)) => Ok(()),
+            Some(StreamRequest::WitnessReport(_)) => Ok(()),
             Some(StreamRequest::SessionInit(init)) => verify_public_key(&init.pub_key)
                 .and_then(|pk| verify_network(self.required_network, pk))
                 .and_then(|pk| verify_signature(Some(&pk), init))
@@ -164,12 +140,10 @@ impl StreamState {
 
 #[derive(Clone, Debug)]
 pub struct GrpcServer {
-    pub beacon_report_sink: FileSinkClient<LoraBeaconIngestReportV1>,
-    pub witness_report_sink: FileSinkClient<LoraWitnessIngestReportV1>,
     pub required_network: Network,
     pub address: SocketAddr,
-    pub session_key_offer_timeout: std::time::Duration,
-    pub session_key_timeout: std::time::Duration,
+    pub session_key_offer_timeout: Duration,
+    pub session_key_timeout: Duration,
 }
 
 impl ManagedTask for GrpcServer {
@@ -229,58 +203,9 @@ where
         })
 }
 
-async fn handle_beacon_report(
-    file_sink: &FileSinkClient<LoraBeaconIngestReportV1>,
-    timestamp: u64,
-    report: LoraBeaconReportReqV1,
-    signing_key: Option<&PublicKey>,
-    expected_pubkey_bytes: Option<&[u8]>,
-) -> Result<(), Status> {
-    let ingest_report = verify_signature(signing_key, report)
-        .and_then(|report| {
-            expected_pubkey_bytes
-                .map(|bytes| bytes == report.pub_key)
-                .unwrap_or(true)
-                .then_some(report)
-                .ok_or_else(|| Status::invalid_argument("incorrect pub_key"))
-        })
-        .map(|report| LoraBeaconIngestReportV1 {
-            received_timestamp: timestamp,
-            report: Some(report),
-        })?;
-
-    _ = file_sink.write(ingest_report, []).await;
-
-    Ok(())
-}
-
-async fn handle_witness_report(
-    file_sink: &FileSinkClient<LoraWitnessIngestReportV1>,
-    timestamp: u64,
-    report: LoraWitnessReportReqV1,
-    session_key: Option<&PublicKey>,
-    expected_pubkey_bytes: Option<&[u8]>,
-) -> Result<(), Status> {
-    let ingest_report = verify_signature(session_key, report)
-        .and_then(|report| {
-            expected_pubkey_bytes
-                .map(|bytes| bytes == report.pub_key)
-                .unwrap_or(true)
-                .then_some(report)
-                .ok_or_else(|| Status::invalid_argument("incorrect pub_key"))
-        })
-        .map(|report| LoraWitnessIngestReportV1 {
-            received_timestamp: timestamp,
-            report: Some(report),
-        })?;
-
-    _ = file_sink.write(ingest_report, []).await;
-
-    Ok(())
-}
-
 #[tonic::async_trait]
 impl poc_lora::PocLora for GrpcServer {
+    // POC retired — validate key/network only (no signature check; data is discarded anyway)
     async fn submit_lora_beacon(
         &self,
         request: Request<LoraBeaconReportReqV1>,
@@ -290,22 +215,15 @@ impl poc_lora::PocLora for GrpcServer {
 
         custom_tracing::record_b58("pub_key", &event.pub_key);
 
-        let pub_key = verify_public_key(&event.pub_key)
+        verify_public_key(&event.pub_key)
             .and_then(|pk| verify_network(self.required_network, pk))?;
 
-        handle_beacon_report(
-            &self.beacon_report_sink,
-            timestamp,
-            event,
-            Some(&pub_key),
-            None,
-        )
-        .await?;
-
-        let id = timestamp.to_string();
-        Ok(Response::new(LoraBeaconReportRespV1 { id }))
+        Ok(Response::new(LoraBeaconReportRespV1 {
+            id: timestamp.to_string(),
+        }))
     }
 
+    // POC retired — validate key/network only (no signature check; data is discarded anyway)
     async fn submit_lora_witness(
         &self,
         request: Request<LoraWitnessReportReqV1>,
@@ -315,20 +233,12 @@ impl poc_lora::PocLora for GrpcServer {
 
         custom_tracing::record_b58("pub_key", &event.pub_key);
 
-        let pub_key = verify_public_key(&event.pub_key)
+        verify_public_key(&event.pub_key)
             .and_then(|pk| verify_network(self.required_network, pk))?;
 
-        handle_witness_report(
-            &self.witness_report_sink,
-            timestamp,
-            event,
-            Some(&pub_key),
-            None,
-        )
-        .await?;
-
-        let id = timestamp.to_string();
-        Ok(Response::new(LoraWitnessReportRespV1 { id }))
+        Ok(Response::new(LoraWitnessReportRespV1 {
+            id: timestamp.to_string(),
+        }))
     }
 
     type stream_requestsStream = GrpcStreamResult<LoraStreamResponseV1>;
@@ -347,33 +257,7 @@ impl poc_lora::PocLora for GrpcServer {
 }
 
 pub async fn grpc_server(settings: &Settings) -> Result<()> {
-    let s3_client = settings.file_store.connect().await;
-    let (file_upload, file_upload_server) =
-        file_upload::FileUpload::new(s3_client, settings.output_bucket.clone()).await;
-
-    // iot beacon reports
-    let (beacon_report_sink, beacon_report_sink_server) = LoraBeaconIngestReportV1::file_sink(
-        &settings.cache,
-        file_upload.clone(),
-        FileSinkCommitStrategy::Automatic,
-        FileSinkRollTime::Duration(Duration::from_secs(5 * 60)),
-        env!("CARGO_PKG_NAME"),
-    )
-    .await?;
-
-    // iot witness reports
-    let (witness_report_sink, witness_report_sink_server) = LoraWitnessIngestReportV1::file_sink(
-        &settings.cache,
-        file_upload.clone(),
-        FileSinkCommitStrategy::Automatic,
-        FileSinkRollTime::Duration(Duration::from_secs(5 * 60)),
-        env!("CARGO_PKG_NAME"),
-    )
-    .await?;
-
     let grpc_server = GrpcServer {
-        beacon_report_sink,
-        witness_report_sink,
         required_network: settings.network,
         address: settings.listen_addr,
         session_key_offer_timeout: settings.session_key_offer_timeout,
@@ -383,9 +267,6 @@ pub async fn grpc_server(settings: &Settings) -> Result<()> {
     tracing::info!("grpc listening on {}", settings.listen_addr);
 
     TaskManager::builder()
-        .add_task(file_upload_server)
-        .add_task(beacon_report_sink_server)
-        .add_task(witness_report_sink_server)
         .add_task(grpc_server)
         .build()
         .start()
