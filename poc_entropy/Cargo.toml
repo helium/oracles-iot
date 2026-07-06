@@ -6,10 +6,6 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
-[[bin]]
-name = "poc_entropy"
-path = "src/main.rs"
-
 [dependencies]
 anyhow = { workspace = true }
 chrono = { workspace = true }
