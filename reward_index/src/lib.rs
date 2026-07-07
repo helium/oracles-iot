@@ -3,7 +3,6 @@ extern crate tls_init;
 pub mod db;
 pub mod extract;
 pub mod indexer;
-pub mod local_reward_manifest;
 pub mod settings;
 pub mod telemetry;
 

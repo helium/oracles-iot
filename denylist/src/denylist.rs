@@ -4,6 +4,18 @@ use serde::Serialize;
 use std::{fs, path};
 use xorf_generator::{edge_hash, public_key_hash, Filter};
 
+// xorf-generator is still built against helium-crypto 0.9, which the compiler
+// treats as a crate distinct from the workspace's helium-crypto 0.11. Public
+// keys are simple byte wrappers, so bridge them across the version boundary by
+// their raw bytes before handing them to xorf-generator.
+fn xorf_key(key: &PublicKeyBinary) -> helium_crypto_09::PublicKeyBinary {
+    helium_crypto_09::PublicKeyBinary::from(key.as_ref().to_vec())
+}
+
+fn xorf_pubkey(key: &PublicKey) -> Option<helium_crypto_09::PublicKey> {
+    helium_crypto_09::PublicKey::try_from(Vec::<u8>::from(key).as_slice()).ok()
+}
+
 pub const SERIAL_SIZE: usize = 32;
 /// a copy of the last saved filter bin downloaded from github
 /// if present will be used to initialise the denylist upon verifier startup
@@ -23,7 +35,7 @@ pub struct DenyList {
 impl TryFrom<Vec<PublicKeyBinary>> for DenyList {
     type Error = Error;
     fn try_from(v: Vec<PublicKeyBinary>) -> Result<Self> {
-        let keys: Vec<u64> = v.iter().map(public_key_hash).collect();
+        let keys: Vec<u64> = v.iter().map(|k| public_key_hash(&xorf_key(k))).collect();
         let filter = Filter::new(0, xorf_generator::xorf::Xor32::from(&keys))
             .map_err(|_| Error::invalid_filter("filter"))?;
         let client = DenyListClient::new()?;
@@ -39,7 +51,10 @@ impl TryFrom<Vec<PublicKeyBinary>> for DenyList {
 impl TryFrom<Vec<(PublicKeyBinary, PublicKeyBinary)>> for DenyList {
     type Error = Error;
     fn try_from(v: Vec<(PublicKeyBinary, PublicKeyBinary)>) -> Result<Self> {
-        let keys: Vec<u64> = v.iter().map(|e| edge_hash(&e.0, &e.1)).collect();
+        let keys: Vec<u64> = v
+            .iter()
+            .map(|e| edge_hash(&xorf_key(&e.0), &xorf_key(&e.1)))
+            .collect();
         let filter = Filter::new(0, xorf_generator::xorf::Xor32::from(&keys))
             .map_err(|_| Error::invalid_filter("filter"))?;
         let client = DenyListClient::new()?;
@@ -122,7 +137,7 @@ impl DenyList {
 
     pub fn contains_key(&self, key: &PublicKeyBinary) -> bool {
         if let Some(filter) = &self.filter {
-            filter.contains(key)
+            filter.contains(&xorf_key(key))
         } else {
             tracing::warn!("empty denylist filter, rejecting key");
             true
@@ -131,7 +146,7 @@ impl DenyList {
 
     pub fn contains_edge(&self, beaconer: &PublicKeyBinary, witness: &PublicKeyBinary) -> bool {
         if let Some(filter) = &self.filter {
-            filter.contains_edge(beaconer, witness)
+            filter.contains_edge(&xorf_key(beaconer), &xorf_key(witness))
         } else {
             tracing::warn!("empty denylist filter, rejecting edge");
             true
@@ -143,8 +158,11 @@ impl DenyList {
 pub fn filter_from_bin(bin: &[u8], sign_keys: &[PublicKey]) -> Result<Filter> {
     let filter = Filter::from_bytes(bin).map_err(|_| Error::invalid_filter("filter"))?;
     let verified = sign_keys.iter().any(|pubkey| {
+        let Some(pubkey_09) = xorf_pubkey(pubkey) else {
+            return false;
+        };
         filter
-            .verify(pubkey)
+            .verify(&pubkey_09)
             .inspect(|_res| {
                 tracing::info!(%pubkey, "valid denylist signer");
             })

@@ -1,11 +1,11 @@
-use crate::{
-    db, extract,
-    local_reward_manifest::{RewardData, RewardManifest},
-    telemetry, Settings,
-};
+use crate::{db, extract, telemetry, Settings};
 use anyhow::{bail, Result};
 use chrono::{DateTime, Utc};
 use file_store::{file_info_poller::FileInfoStream, FileInfo, Stream};
+use file_store_oracles::network_common::reward_manifest::{
+    RewardData::{self, IotRewardData, MobileRewardData},
+    RewardManifest,
+};
 use futures::{stream, StreamExt, TryStreamExt};
 use helium_proto::Message;
 use poc_metrics::record_duration;
@@ -158,7 +158,7 @@ impl Indexer {
 
     fn verify_token_type(&self, reward_data: &Option<RewardData>) -> Result<()> {
         match reward_data {
-            Some(RewardData::MobileRewardData { token, .. }) => {
+            Some(MobileRewardData { token, .. }) => {
                 if *token != proto::MobileRewardToken::Hnt {
                     bail!(
                         "legacy token type defined in manifest: {}",
@@ -166,7 +166,7 @@ impl Indexer {
                     );
                 }
             }
-            Some(RewardData::IotRewardData { token, .. }) => {
+            Some(IotRewardData { token, .. }) => {
                 if *token != proto::IotRewardToken::Hnt {
                     bail!(
                         "legacy token type defined in manifest: {}",
