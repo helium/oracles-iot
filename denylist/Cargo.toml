@@ -24,3 +24,8 @@ chrono = { workspace = true }
 humantime-serde = { workspace = true }
 
 xorf-generator = { git = "https://github.com/helium/xorf-generator", branch = "main" }
+# xorf-generator is still pinned to helium-crypto 0.9, which the compiler treats
+# as a crate distinct from the workspace's helium-crypto 0.11. Pull in 0.9 under
+# an alias so we can bridge public keys across the version boundary by their raw
+# bytes when calling into xorf-generator. Remove once xorf-generator moves to 0.11.
+helium-crypto-09 = { package = "helium-crypto", version = "0.9", default-features = false }
