@@ -1,7 +1,8 @@
 //
 // this cache is used to resolve gateway info for a given gateway
-// the gateway info is required by the poc verifications as part of verifying beacon and witness reports
-// the cache is populated / updated by the gateway_updater and is prepopulated at  startup
+// the gateway info is required by the packet loader to determine whether a
+// data-transfer packet's gateway is rewardable
+// the cache is populated / updated by the gateway_updater and is prepopulated at startup
 //
 
 use crate::gateway_updater::MessageReceiver;

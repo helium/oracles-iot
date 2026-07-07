@@ -1,122 +1,73 @@
-
-# log settings for the application (RUST_LOG format). Default below
+# iot-verifier settings template.
 #
-# log = "iot-verifier=debug,poc_store=info"
+# Values shown are the defaults; commented keys are optional. Any value can be
+# overridden with a VERIFY_<SECTION>__<KEY> environment variable (double
+# underscore separates nested keys), e.g. VERIFY_DATABASE__URL.
 
-# Cache location for generated verified reports; Required
-#
+# RUST_LOG compatible log filter. Default below.
+# log = "iot_verifier=debug"
+
+# Reward period (how much time each reward epoch covers). Default 24 hours.
+# reward_period = "24 hours"
+
+# Delay after the end of a reward period before rewards are calculated.
+# Default 30 minutes.
+# reward_period_offset = "30 minutes"
+
+# Max lookback age for the packet loader's file window. Default 1 hour.
+# loader_window_max_lookback_age = "1 hour"
+
+# Poll interval for incoming HPR packet files. Default 15 minutes.
+# packet_interval = "15 minutes"
+
+# How often the cached gateways are refreshed from iot-config. Default 30 minutes.
+# gateway_refresh_interval = "30 minutes"
+
+# File store clients. Required.
+[file_store_clients]
+# Local cache location for reports staged before upload. Required.
 cache = "/var/data/iot-verified"
 
-# Default beacon interval in hours
-beacon_interval = 6
+# Bucket the verifier writes reward shares and manifests to. Required.
+[file_store_clients.output]
+bucket = "mainnet-iot-verified"
+# region = "us-west-2"
+# endpoint = "https://s3.us-west-2.amazonaws.com"
 
-# how often the ingestors write out to s3
-# this is used to pad the witness loading `after` and `before` periods
-ingestor_rollup_time = 300
-
-# window width for the  poc report loader ( in seconds )
-# NOTE: the window width should be as a minimum equal to the ingestor roll up period
-#       any less and the verifier will potentially miss incoming reports
-poc_loader_window_width = 300
-
-# cadence for how often to look for poc reports from s3 buckets ( in seconds )
-# in normal operational mode the poll time should be set same as that of the window width
-# however, if for example we are loading historic data, ie looking back 24hours, we will want
-# the loader to be catching up as quickly as possible and so we will want to poll more often
-# in order to iterate quickly over the historic data
-# the average time it takes to load the data available within the window width needs to be
-# considered here, the poll time should be at least equal to that plus some percentage
-# if in doubt, keep this same value as poc_loader_window_width
-poc_loader_poll_time = 300
-
-# max window age for the entropy and poc report loader ( in seconds )
-# the starting point of the window will never be older than NOW - max_age
-loader_window_max_lookback_age = 3600
-
-# the lifespan of a piece of entropy ( in seconds )
-entropy_lifespan = 180
-
-# File store poll interval for incoming entropy reports, in seconds
-entropy_interval = 300
-
-# runner runs at 30 sec intervals
-# 60 permits retries for up to 30 mins
-beacon_max_retries = 60
-
-# witnesses are processed per beacon
-# as such the retry can be much less as if the beacon fails
-# then the witnesses auto fail too
-# if the beacon is processed successfully, then any one witness
-# can only fail 5 times before we move on without it
-witness_max_retries = 5
+# Bucket the verifier reads HPR data-transfer packet reports from. Required.
+[file_store_clients.packet_input]
+bucket = "mainnet-iot-packet-ingest"
+# region = "us-west-2"
+# endpoint = "https://s3.us-west-2.amazonaws.com"
 
 [database]
-
-# Postgres Connection Information
+# Postgres connection string. Required.
 url = "postgres://postgres:postgres@127.0.0.1:5432/iot_verifier"
+# max_connections = 10
 
-# Max connections to the database.
-max_connections = 400
+# iot-config gRPC client (sub-dao reward info + gateway lookups). Required.
+[iot_config_client]
+url = "http://127.0.0.1:8080"
+# Keypair used to sign requests to iot-config.
+signing_keypair = "/etc/iot-verifier/signing_keypair.bin"
+# b58 public key of the iot-config server, used to verify its responses.
+config_pubkey = ""
 
-[ingest]
+# Price tracker (reads HNT price reports from the price oracle). Required.
+[price_tracker]
+# price_duration_minutes = 60
 
-# Input bucket details for ingest data
-
-# Name of bucket to access ingest data. Required
-#
-bucket = "mainnet-ingest-bucket"
-
-# Region for bucket. Defaults to below
-#
+[price_tracker.bucket]
+bucket = "mainnet-price"
 # region = "us-west-2"
-
-# Optional URL for AWS api endpoint. Inferred from aws config settings or aws
-# IAM context by default
-#
-# endpoint = "https://aws-s3-bucket.aws.com"
-
-
-[entropy]
-
-# Input bucket details for entropy data
-
-# Name of bucket to access entropy data. Required
-#
-bucket = "mainnet-entropy-bucket"
-
-# Region for bucket. Defaults to below
-#
-# region = "us-west-2"
-
-# Optional URL for AWS api endpoint. Inferred from aws config settings or aws
-# IAM context by default
-#
-# endpoint = "https://aws-s3-bucket.aws.com"
-
-[output]
-# Output bucket for verified reports
-
-# Name of bucket to write details to. Required
-#
-bucket = "mainnet-verified-bucket"
-
-# Region for bucket. Defaults to below
-#
-# region = "us-west-2"
-
-# Optional URL for AWS api endpoint. Inferred from aws config settings or aws
-# IAM context by default
-#
-# endpoint = "https://aws-s3-bucket.aws.com"
+# endpoint = "https://s3.us-west-2.amazonaws.com"
 
 [metrics]
-
-# Endpoint for metrics. Default below
-#
+# Prometheus scrape endpoint. Default below.
 # endpoint = "127.0.0.1:19000"
 
-# Iceberg connection settings, used by `backfill-rewards` and `backfill-burns`.
-# Optional; the `server` subcommand does not need this section.
+# Iceberg connection settings, used by `backfill-rewards`. Optional; the
+# `server` subcommand does not need this section.
 #
 # [iceberg_settings]
 # catalog_uri = "https://iceberg-catalog.example/catalog"

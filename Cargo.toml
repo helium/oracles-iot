@@ -85,7 +85,6 @@ bytes = "*"
 bincode = "1"
 twox-hash = "1"
 async-trait = "*"
-blake3 = "*"
 retainer = "*"
 rand = "0.8"
 itertools = "0.14"
@@ -126,7 +125,6 @@ url = "2.5.4"
 helium-proto = { git = "https://github.com/helium/proto", branch = "master", features = [
   "services",
 ] }
-beacon = { git = "https://github.com/helium/proto", branch = "master" }
 helium-proto-crypto = { git = "https://github.com/helium/helium-wallet-rs", branch = "master" }
 # Pickup versions from above
 prost = "*"
@@ -159,18 +157,13 @@ anchor-lang = { git = "https://github.com/madninja/anchor.git", branch = "madnin
 # When attempting to test proto changes without needing to push a branch you can
 # patch the github url to point to your local proto repo.
 #
-# Patching for beacon must point directly to the crate, it will not look in the
-# repo for sibling crates.
-#
 # [patch.'https://github.com/helium/proto']
 # helium-proto = { path = "../proto" }
-# beacon = { path = "../proto/beacon" }
 
 # [patch.'https://github.com/helium/proto']
 # helium-proto = { git = "https://www.github.com/helium/proto.git", branch = "dcyoung/radio-usage-stats-req-v2" }
 
 # [patch.'https://github.com/helium/proto']
 # helium-proto = { git = "https://www.github.com/helium/proto.git", branch = "macpie/multibuy2.0", features = ["services"] }
-# beacon = { git = "https://www.github.com/helium/proto.git", branch = "macpie/multibuy2.0" }
 # msg-signature = { git = "https://www.github.com/helium/proto.git", branch = "macpie/multibuy2.0" }
 # msg-signature-macro = { git = "https://www.github.com/helium/proto.git", branch = "macpie/multibuy2.0" }
