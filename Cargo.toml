@@ -8,9 +8,6 @@ members = [
   "iot_packet_verifier",
   "iot_verifier",
 
-  # Shared libraries
-  "denylist",
-
   # Duplicate apps reduced to only iot functionality
   "ingest",
   "poc_entropy",
@@ -84,7 +81,6 @@ futures = "*"
 futures-util = "*"
 config = { version = "0", default-features = false, features = ["toml"] }
 h3o = { version = "0", features = ["serde"] }
-xorf = { version = "0", features = ["serde"] }
 bytes = "*"
 bincode = "1"
 twox-hash = "1"
@@ -101,9 +97,6 @@ tempfile = "3"
 csv = "*"
 strum = { version = "0", features = ["derive"] }
 strum_macros = "0"
-
-### Local workspace dependencies
-denylist = { path = "./denylist" }
 
 ### Git dependencies from oracles (mobile) repo
 file-store = { git = "https://github.com/helium/oracles.git", branch = "main" }

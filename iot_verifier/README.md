@@ -22,7 +22,6 @@ The verifier will periodically query the incoming S3 bucket and process any new 
 
 beacon reports
 - `assertion check`: has the beaconing hotspot been asserted
-- `denylist check`: is the beaconing hotspot on the denylist
 - `valid entropy check`:  is the entropy included in the beacon report valid, 
 - `capability check`: is the beaconing hotspot permitted to participate in POC
 - `interval check`: is the beaconer permitted to beacon at the current time
@@ -31,8 +30,6 @@ beacon reports
 
 witness reports
 - `assertion check`: has the witnessing hotspot been asserted
-- `denylist check`: is the witnessing hotspot on the denylist
-- `denylist edge check`: is the witnessing hotspot on a denied edge
 - `self witness check`:  is the report a self witness
 - `entropy interval check`: was the witness report received within the associated entropy's lifespan
 - `lag check`:  was the report received within the permitted lag time of the first received report
