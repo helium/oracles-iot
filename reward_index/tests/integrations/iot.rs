@@ -203,3 +203,31 @@ async fn operation_rewards_are_combined(pool: PgPool) -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn decode_reward_manifest() -> anyhow::Result<()> {
+    use file_store::traits::TimestampEncode;
+
+    let proto_manifest = helium_proto::RewardManifest {
+        written_files: vec![],
+        start_timestamp: Utc::now().encode_timestamp(),
+        end_timestamp: Utc::now().encode_timestamp(),
+        epoch: 1234,
+        price: 1234,
+        reward_data: Some(helium_proto::reward_manifest::RewardData::IotRewardData(
+            helium_proto::IotRewardData {
+                poc_bones_per_beacon_reward_share: None,
+                poc_bones_per_witness_reward_share: None,
+                dc_bones_per_share: Some(helium_proto::Decimal {
+                    value: "1234".to_string(),
+                }),
+                token: helium_proto::IotRewardToken::Hnt.into(),
+            },
+        )),
+    };
+
+    use file_store_oracles::network_common::reward_manifest::RewardManifest;
+    let _manifest = RewardManifest::try_from(proto_manifest).expect("decode reward manifest");
+
+    Ok(())
+}
