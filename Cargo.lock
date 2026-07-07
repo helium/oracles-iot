@@ -2648,7 +2648,7 @@ dependencies = [
 [[package]]
 name = "custom-tracing"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#e052436a423052af1675e1b3b25d5a5d72e32432"
+source = "git+https://github.com/helium/oracles.git?branch=main#6d02e83ca0619ae14524a59d658861c5af7c14c1"
 dependencies = [
  "anyhow",
  "bs58",
@@ -2755,7 +2755,7 @@ checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 [[package]]
 name = "db-store"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#e052436a423052af1675e1b3b25d5a5d72e32432"
+source = "git+https://github.com/helium/oracles.git?branch=main#6d02e83ca0619ae14524a59d658861c5af7c14c1"
 dependencies = [
  "aws-config",
  "aws-credential-types",
@@ -3343,7 +3343,7 @@ checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 [[package]]
 name = "file-store"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#e052436a423052af1675e1b3b25d5a5d72e32432"
+source = "git+https://github.com/helium/oracles.git?branch=main#6d02e83ca0619ae14524a59d658861c5af7c14c1"
 dependencies = [
  "async-compression",
  "async-trait",
@@ -3377,7 +3377,7 @@ dependencies = [
 [[package]]
 name = "file-store-oracles"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#e052436a423052af1675e1b3b25d5a5d72e32432"
+source = "git+https://github.com/helium/oracles.git?branch=main#6d02e83ca0619ae14524a59d658861c5af7c14c1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4052,7 +4052,7 @@ dependencies = [
 [[package]]
 name = "helium-iceberg"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#e052436a423052af1675e1b3b25d5a5d72e32432"
+source = "git+https://github.com/helium/oracles.git?branch=main#6d02e83ca0619ae14524a59d658861c5af7c14c1"
 dependencies = [
  "arrow-array",
  "arrow-ipc",
@@ -6464,7 +6464,7 @@ dependencies = [
 [[package]]
 name = "poc-metrics"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#e052436a423052af1675e1b3b25d5a5d72e32432"
+source = "git+https://github.com/helium/oracles.git?branch=main#6d02e83ca0619ae14524a59d658861c5af7c14c1"
 dependencies = [
  "futures",
  "metrics",
@@ -6582,7 +6582,7 @@ dependencies = [
 [[package]]
 name = "price-tracker"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#e052436a423052af1675e1b3b25d5a5d72e32432"
+source = "git+https://github.com/helium/oracles.git?branch=main#6d02e83ca0619ae14524a59d658861c5af7c14c1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7349,7 +7349,7 @@ dependencies = [
 [[package]]
 name = "reward-scheduler"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#e052436a423052af1675e1b3b25d5a5d72e32432"
+source = "git+https://github.com/helium/oracles.git?branch=main#6d02e83ca0619ae14524a59d658861c5af7c14c1"
 dependencies = [
  "chrono",
  "thiserror 1.0.69",
@@ -8139,7 +8139,7 @@ dependencies = [
 [[package]]
 name = "solana"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#e052436a423052af1675e1b3b25d5a5d72e32432"
+source = "git+https://github.com/helium/oracles.git?branch=main#6d02e83ca0619ae14524a59d658861c5af7c14c1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -11396,7 +11396,7 @@ checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 [[package]]
 name = "task-manager"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#e052436a423052af1675e1b3b25d5a5d72e32432"
+source = "git+https://github.com/helium/oracles.git?branch=main#6d02e83ca0619ae14524a59d658861c5af7c14c1"
 dependencies = [
  "futures",
  "futures-util",
@@ -11565,7 +11565,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 [[package]]
 name = "tls-init"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#e052436a423052af1675e1b3b25d5a5d72e32432"
+source = "git+https://github.com/helium/oracles.git?branch=main#6d02e83ca0619ae14524a59d658861c5af7c14c1"
 dependencies = [
  "ctor",
  "hyper-rustls 0.27.7",
