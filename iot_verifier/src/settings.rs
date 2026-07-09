@@ -124,7 +124,7 @@ impl Settings {
             "database": self.database,
             "iot_config_client": {
                 "url": self.iot_config_client.url.to_string(),
-                "signing_keypair_file": self.iot_config_client.signing_keypair,
+                "signing_keypair_pubkey": self.iot_config_client.signing_keypair.public_key().to_string(),
                 "config_pubkey": self.iot_config_client.config_pubkey
             },
             "metrics": self.metrics,

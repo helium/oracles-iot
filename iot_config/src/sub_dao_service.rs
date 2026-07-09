@@ -29,7 +29,7 @@ impl SubDaoService {
         Ok(Self {
             auth_cache,
             metadata_pool,
-            signing_key: Arc::new(settings.signing_keypair()?),
+            signing_key: settings.signing_keypair(),
         })
     }
 

@@ -31,7 +31,7 @@ impl Settings {
                 .add_source(File::with_name(&file.as_ref().to_string_lossy()).required(false));
         }
         builder
-            .add_source(Environment::with_prefix("ENTROPY").separator("_"))
+            .add_source(Environment::with_prefix("ENTROPY").separator("__"))
             .build()
             .and_then(|config| config.try_deserialize())
     }

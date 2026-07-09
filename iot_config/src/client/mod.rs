@@ -97,7 +97,7 @@ impl Client {
         Ok(Self {
             gateway_client: iot_config::gateway_client::GatewayClient::new(channel.clone()),
             admin_client: iot_config::admin_client::AdminClient::new(channel),
-            signing_key: settings.signing_keypair()?,
+            signing_key: settings.signing_keypair(),
             config_pubkey: settings.config_pubkey()?,
             batch_size: settings.batch_size,
         })
