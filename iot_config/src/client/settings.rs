@@ -6,8 +6,10 @@ pub struct Settings {
     /// grpc url to the iot config oracle server
     #[serde(with = "http_serde::uri")]
     pub url: http::Uri,
-    /// File from which to load keypair for signing config client requests
-    pub signing_keypair: String,
+    /// Base64-encoded bytes of the keypair for signing config client requests.
+    /// Supplied via file or environment variable.
+    #[serde(deserialize_with = "crate::deserialize_helium_keypair")]
+    pub signing_keypair: Arc<helium_crypto::Keypair>,
     /// B58 encoded public key of the iot config server for verifying responses
     pub config_pubkey: String,
     /// Connect timeout for the iot config client in seconds. Default 5
@@ -34,9 +36,8 @@ fn default_batch_size() -> u32 {
 }
 
 impl Settings {
-    pub fn signing_keypair(&self) -> Result<Arc<helium_crypto::Keypair>, helium_crypto::Error> {
-        let data = std::fs::read(&self.signing_keypair).map_err(helium_crypto::Error::from)?;
-        Ok(Arc::new(helium_crypto::Keypair::try_from(&data[..])?))
+    pub fn signing_keypair(&self) -> Arc<helium_crypto::Keypair> {
+        self.signing_keypair.clone()
     }
 
     pub fn config_pubkey(&self) -> Result<helium_crypto::PublicKey, helium_crypto::Error> {

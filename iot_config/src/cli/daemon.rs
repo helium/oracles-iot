@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use crate::gateway::tracker::Tracker;
 use crate::grpc_server::GrpcServer;
 use crate::sub_dao_service::SubDaoService;
@@ -34,7 +32,7 @@ impl Daemon {
         let (region_updater, region_map) = RegionMapReader::new(&pool).await?;
         let (delegate_key_updater, delegate_key_cache) = org::delegate_keys_cache(&pool).await?;
 
-        let signing_keypair = Arc::new(settings.signing_keypair()?);
+        let signing_keypair = settings.signing_keypair();
 
         let gateway_svc = GatewayService::new(
             signing_keypair.clone(),
@@ -67,9 +65,7 @@ impl Daemon {
         let subdao_svc = SubDaoService::new(settings, auth_cache, metadata_pool.clone())?;
 
         let listen_addr = settings.listen;
-        let pubkey = settings
-            .signing_keypair()
-            .map(|keypair| keypair.public_key().to_string())?;
+        let pubkey = settings.signing_keypair().public_key().to_string();
         tracing::debug!("listening on {listen_addr}");
         tracing::debug!("signing as {pubkey}");
 

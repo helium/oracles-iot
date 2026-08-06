@@ -30,7 +30,7 @@ impl SubDaoClient {
             .connect_lazy();
         Ok(Self {
             client: sub_dao::sub_dao_client::SubDaoClient::new(channel),
-            signing_key: settings.signing_keypair()?,
+            signing_key: settings.signing_keypair(),
             config_pubkey: settings.config_pubkey()?,
         })
     }

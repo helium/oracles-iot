@@ -43,7 +43,7 @@ impl OrgClient {
             .connect_lazy();
         Ok(Self {
             client: iot_config::config_org_client::OrgClient::new(channel),
-            signing_key: settings.signing_keypair()?,
+            signing_key: settings.signing_keypair(),
             config_pubkey: settings.config_pubkey()?,
         })
     }

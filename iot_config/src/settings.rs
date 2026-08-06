@@ -1,7 +1,7 @@
 use config::{Config, Environment, File};
 use humantime_serde::re::humantime;
 use serde::Deserialize;
-use std::{net::SocketAddr, path::Path, str::FromStr, time::Duration};
+use std::{net::SocketAddr, path::Path, str::FromStr, sync::Arc, time::Duration};
 
 #[derive(Debug, Deserialize)]
 pub struct Settings {
@@ -14,8 +14,11 @@ pub struct Settings {
     /// Listen address. Required. Default is 0.0.0.0:8080
     #[serde(default = "default_listen_addr")]
     pub listen: SocketAddr,
-    /// File from which to load config server signing keypair
-    pub keypair: String,
+    /// Base64-encoded bytes of the config server signing keypair. Can be set in
+    /// the settings file or overridden via the `CFG`-prefixed environment
+    /// variable (see [`Settings::new`]), so no key file needs to be mounted.
+    #[serde(deserialize_with = "crate::deserialize_helium_keypair")]
+    pub keypair: Arc<helium_crypto::Keypair>,
     /// B58 encoded public key of the admin keypair
     pub admin: String,
     #[serde(with = "humantime_serde", default = "default_deleted_entry_retention")]
@@ -50,8 +53,9 @@ impl Settings {
     /// can be overridden with environment variables.
     ///
     /// Environment overrides have the same name as the entries
-    /// in the settings file in uppercase and prefixed with "CFG_".
-    /// Example: "CFG_DATABASE_URL" will override the database url.
+    /// in the settings file in uppercase, prefixed with "CFG" and
+    /// separated by "__". Example: "CFG__DATABASE__URL" overrides the
+    /// database url, "CFG__KEYPAIR" overrides the signing keypair.
     pub fn new<P: AsRef<Path>>(path: Option<P>) -> Result<Self, config::ConfigError> {
         let mut builder = Config::builder();
 
@@ -69,9 +73,8 @@ impl Settings {
             .and_then(|config| config.try_deserialize())
     }
 
-    pub fn signing_keypair(&self) -> Result<helium_crypto::Keypair, Box<helium_crypto::Error>> {
-        let data = std::fs::read(&self.keypair).map_err(helium_crypto::Error::from)?;
-        Ok(helium_crypto::Keypair::try_from(&data[..])?)
+    pub fn signing_keypair(&self) -> Arc<helium_crypto::Keypair> {
+        self.keypair.clone()
     }
 
     pub fn admin_pubkey(&self) -> Result<helium_crypto::PublicKey, helium_crypto::Error> {
