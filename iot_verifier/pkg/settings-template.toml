@@ -1,8 +1,8 @@
 # iot-verifier settings template.
 #
 # Values shown are the defaults; commented keys are optional. Any value can be
-# overridden with a VERIFY_<SECTION>__<KEY> environment variable (double
-# underscore separates nested keys), e.g. VERIFY_DATABASE__URL.
+# overridden with a VERIFY__<SECTION>__<KEY> environment variable (double
+# underscore separates nested keys), e.g. VERIFY__DATABASE__URL.
 
 # RUST_LOG compatible log filter. Default below.
 # log = "iot_verifier=debug"
