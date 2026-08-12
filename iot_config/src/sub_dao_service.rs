@@ -26,27 +26,10 @@ impl SubDaoService {
         auth_cache: AuthCache,
         trino: trino_client::Client,
     ) -> Result<Self> {
-        Self::new_with_schema(
-            settings,
-            auth_cache,
-            trino,
-            sub_dao_epoch_reward_info::trino::SOLANA_SCHEMA,
-        )
-    }
-
-    /// Like [`new`](Self::new), but with an explicit `catalog.schema` for the
-    /// on-chain indexer tables. Tests use this to point at seeded fixtures in their
-    /// own catalog, since the production `solana` catalog does not exist there.
-    pub fn new_with_schema(
-        settings: &Settings,
-        auth_cache: AuthCache,
-        trino: trino_client::Client,
-        solana_schema: impl Into<String>,
-    ) -> Result<Self> {
         Ok(Self {
             auth_cache,
             trino,
-            solana_schema: solana_schema.into(),
+            solana_schema: sub_dao_epoch_reward_info::trino::SOLANA_SCHEMA.to_string(),
             signing_key: settings.signing_keypair(),
         })
     }

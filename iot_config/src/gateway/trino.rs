@@ -76,6 +76,10 @@ impl InventoryRow {
         };
 
         // The column is an unprefixed lowercase H3 hex string, e.g. "8828308280fffff".
+        // A value we can't decode degrades the gateway to unasserted rather than
+        // dropping it: without a row the service answers not-found and the verifier
+        // discards the hotspot's beacons entirely, which is far worse than serving it
+        // with no location.
         let location = match self.asserted_hex.as_deref() {
             None => None,
             Some(hex) => match u64::from_str_radix(hex, 16) {
@@ -85,9 +89,9 @@ impl InventoryRow {
                         pub_key = %self.pub_key,
                         asserted_hex = %hex,
                         ?err,
-                        "skipping inventory row with unparseable asserted_hex"
+                        "treating gateway as unasserted, unparseable asserted_hex"
                     );
-                    return None;
+                    None
                 }
             },
         };
@@ -220,9 +224,23 @@ mod tests {
     }
 
     #[test]
-    fn unparseable_rows_are_skipped_not_fatal() {
+    fn unparseable_pub_key_is_skipped_not_fatal() {
+        // Without a pubkey there is no row to write at all.
         assert!(row("not-a-pubkey", None).to_gateway().is_none());
-        assert!(row(PUB_KEY, Some("nothex")).to_gateway().is_none());
+    }
+
+    #[test]
+    fn unparseable_asserted_hex_degrades_to_unasserted() {
+        // The gateway is still served, just without a location — dropping it would
+        // make the service answer not-found for a hotspot that exists.
+        for hex in ["nothex", "", "0x8828308280fffff"] {
+            let gateway = row(PUB_KEY, Some(hex))
+                .to_gateway()
+                .unwrap_or_else(|| panic!("{hex:?} should not drop the gateway"));
+            assert_eq!(gateway.location, None);
+            assert_eq!(gateway.location_changed_at, None);
+            assert_eq!(gateway.elevation, Some(5));
+        }
     }
 
     #[test]

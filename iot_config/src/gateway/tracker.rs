@@ -5,6 +5,12 @@ use task_manager::ManagedTask;
 
 const EXECUTE_DURATION_METRIC: &str =
     concat!(env!("CARGO_PKG_NAME"), "-", "tracker-execute-duration");
+/// Incremented whenever a tick fails. The duration histogram is only recorded on
+/// success, so without this a permanently broken tracker (expired JWT, renamed
+/// catalog) would emit no metric at all and be indistinguishable from a scrape gap
+/// while `gateways` silently goes stale.
+const EXECUTE_FAILURE_METRIC: &str =
+    concat!(env!("CARGO_PKG_NAME"), "-", "tracker-execute-failures");
 
 /// Rows per `INSERT ... ON CONFLICT` statement.
 const BATCH_SIZE: usize = 1_000;
@@ -24,22 +30,10 @@ impl ManagedTask for Tracker {
 
 impl Tracker {
     pub fn new(pool: Pool<Postgres>, trino: trino_client::Client, interval: Duration) -> Self {
-        Self::new_with_inventory_table(pool, trino, trino::IOT_HOTSPOT_INVENTORY_TABLE, interval)
-    }
-
-    /// Like [`new`](Self::new), but with an explicit inventory table name. Tests use
-    /// this to point at a seeded table in their own catalog, since the production
-    /// `network.chain.iot_hotspot_inventory` name does not exist there.
-    pub fn new_with_inventory_table(
-        pool: Pool<Postgres>,
-        trino: trino_client::Client,
-        inventory_table: impl Into<String>,
-        interval: Duration,
-    ) -> Self {
         Self {
             pool,
             trino,
-            inventory_table: inventory_table.into(),
+            inventory_table: trino::IOT_HOTSPOT_INVENTORY_TABLE.to_string(),
             interval,
         }
     }
@@ -55,7 +49,9 @@ impl Tracker {
                 _ = interval.tick() => {
                     if let Err(err) = execute(&self.pool, &self.trino, &self.inventory_table).await {
                         // A Trino hiccup shouldn't take the daemon down; the next
-                        // tick retries against unchanged local data.
+                        // tick retries against unchanged local data. Counted so a
+                        // persistent failure is alertable rather than just a log line.
+                        metrics::counter!(EXECUTE_FAILURE_METRIC).increment(1);
                         tracing::error!(?err, "tracker execute failed");
                     }
                 }

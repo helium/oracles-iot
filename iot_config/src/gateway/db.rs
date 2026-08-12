@@ -74,18 +74,18 @@ impl Gateway {
                 hash = EXCLUDED.hash,
                 is_active = EXCLUDED.is_active,
                 is_full_hotspot = EXCLUDED.is_full_hotspot,
-                last_changed_at = CASE 
-                    WHEN gateways.location IS DISTINCT FROM EXCLUDED.location 
-                      OR gateways.hash     IS DISTINCT FROM EXCLUDED.hash 
-                    THEN EXCLUDED.refreshed_at 
-                    ELSE gateways.last_changed_at 
+                last_changed_at = CASE
+                    WHEN gateways.location IS DISTINCT FROM EXCLUDED.location
+                      OR gateways.hash     IS DISTINCT FROM EXCLUDED.hash
+                    THEN EXCLUDED.refreshed_at
+                    ELSE gateways.last_changed_at
                 END,
                 location = EXCLUDED.location,
                 location_asserts = EXCLUDED.location_asserts,
-                location_changed_at = CASE 
-                    WHEN gateways.location IS DISTINCT FROM EXCLUDED.location 
-                    THEN EXCLUDED.refreshed_at 
-                    ELSE gateways.location_changed_at 
+                location_changed_at = CASE
+                    WHEN gateways.location IS DISTINCT FROM EXCLUDED.location
+                    THEN EXCLUDED.refreshed_at
+                    ELSE gateways.location_changed_at
                 END,
                 refreshed_at = EXCLUDED.refreshed_at,
                 updated_at = EXCLUDED.updated_at",
