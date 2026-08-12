@@ -115,7 +115,7 @@ trino-client = { git = "https://github.com/helium/oracles.git", branch = "main" 
 # Must stay on the same major as the version `trino-client` itself uses (see the
 # oracles workspace Cargo.toml) — a mismatch silently yields two copies of the crate
 # and `TrinoFromRow` stops satisfying `Client::get_all`'s bound.
-trino-rust-client = "0.9"
+trino-rust-client = "0.11"
 
 ### AWS
 aws-config = "1.8"
@@ -159,7 +159,12 @@ tonic = { version = "*", features = ["tls-aws-lc", "tls-native-roots"] }
 
 
 [patch.crates-io]
-anchor-lang = { git = "https://github.com/madninja/anchor.git", branch = "madninja/const_pubkey" }
+# Pinned by rev, not branch, to match how helium-wallet-rs specifies the same fork.
+# Cargo keys git sources on the full spec, so `?branch=madninja/const_pubkey` and
+# `?rev=1dfe803` resolve to the same commit but produce two distinct copies of
+# anchor-lang — and then `AccountDeserialize` from one doesn't satisfy a bound from
+# the other, which surfaces deep inside helium-lib rather than as a version conflict.
+anchor-lang = { git = "https://github.com/madninja/anchor.git", rev = "1dfe80386037379325c30095dcdb51e152c1e3c5" }
 
 # When attempting to test proto changes without needing to push a branch you can
 # patch the github url to point to your local proto repo.
