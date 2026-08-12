@@ -166,6 +166,7 @@ services:
     volumes:
       - ./infra/trino/etc/catalog/iceberg.properties:/etc/trino/catalog/iceberg.properties:ro
       - ./infra/trino/etc/catalog/postgres.properties:/etc/trino/catalog/postgres.properties:ro
+      - ./infra/trino/etc/catalog/solana.properties:/etc/trino/catalog/solana.properties:ro
       - ./infra/trino/etc/config.properties:/etc/trino/config.properties:ro
       - ./infra/trino/etc/jvm.config:/etc/trino/jvm.config:ro
     healthcheck:

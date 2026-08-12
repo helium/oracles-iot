@@ -35,8 +35,7 @@ async fn gateway_bulk_insert_and_get(pool: PgPool) -> anyhow::Result<()> {
         assert_eq!(got.location_asserts, Some(4));
         assert!(got.location_changed_at.is_some());
         assert_eq!(got.location_changed_at.unwrap(), common::nanos_trunc(now));
-        assert!(got.refreshed_at.is_some());
-        assert_eq!(got.refreshed_at.unwrap(), common::nanos_trunc(now));
+        assert_eq!(got.refreshed_at, common::nanos_trunc(now));
         assert_eq!(got.updated_at, common::nanos_trunc(now));
     }
 
@@ -60,7 +59,7 @@ fn gw(address: PublicKeyBinary, ts: chrono::DateTime<Utc>) -> Gateway {
         location: Some(3),
         location_asserts: Some(4),
         location_changed_at: Some(ts),
-        refreshed_at: Some(ts),
+        refreshed_at: ts,
         updated_at: ts,
     }
 }

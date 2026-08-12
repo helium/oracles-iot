@@ -109,6 +109,13 @@ price-tracker = { git = "https://github.com/helium/oracles.git", branch = "main"
 reward-scheduler = { git = "https://github.com/helium/oracles.git", branch = "main" }
 solana = { git = "https://github.com/helium/oracles.git", branch = "main" }
 helium-iceberg = { git = "https://github.com/helium/oracles.git", branch = "main", default-features = false }
+trino-client = { git = "https://github.com/helium/oracles.git", branch = "main" }
+# Needed alongside `trino-client`: its re-exported `Trino` derive macro expands to
+# absolute `::trino_rust_client::...` paths, so the crate must be a direct dependency.
+# Must stay on the same major as the version `trino-client` itself uses (see the
+# oracles workspace Cargo.toml) — a mismatch silently yields two copies of the crate
+# and `TrinoFromRow` stops satisfying `Client::get_all`'s bound.
+trino-rust-client = "0.9"
 
 ### AWS
 aws-config = "1.8"

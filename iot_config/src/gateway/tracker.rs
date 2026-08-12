@@ -1,5 +1,4 @@
-use crate::gateway::{db::Gateway, metadata_db::IOTHotspotInfo};
-use futures_util::{StreamExt, TryStreamExt};
+use crate::gateway::{db::Gateway, trino};
 use sqlx::{Pool, Postgres};
 use std::time::{Duration, Instant};
 use task_manager::ManagedTask;
@@ -7,9 +6,13 @@ use task_manager::ManagedTask;
 const EXECUTE_DURATION_METRIC: &str =
     concat!(env!("CARGO_PKG_NAME"), "-", "tracker-execute-duration");
 
+/// Rows per `INSERT ... ON CONFLICT` statement.
+const BATCH_SIZE: usize = 1_000;
+
 pub struct Tracker {
     pool: Pool<Postgres>,
-    metadata: Pool<Postgres>,
+    trino: trino_client::Client,
+    inventory_table: String,
     interval: Duration,
 }
 
@@ -20,10 +23,23 @@ impl ManagedTask for Tracker {
 }
 
 impl Tracker {
-    pub fn new(pool: Pool<Postgres>, metadata: Pool<Postgres>, interval: Duration) -> Self {
+    pub fn new(pool: Pool<Postgres>, trino: trino_client::Client, interval: Duration) -> Self {
+        Self::new_with_inventory_table(pool, trino, trino::IOT_HOTSPOT_INVENTORY_TABLE, interval)
+    }
+
+    /// Like [`new`](Self::new), but with an explicit inventory table name. Tests use
+    /// this to point at a seeded table in their own catalog, since the production
+    /// `network.chain.iot_hotspot_inventory` name does not exist there.
+    pub fn new_with_inventory_table(
+        pool: Pool<Postgres>,
+        trino: trino_client::Client,
+        inventory_table: impl Into<String>,
+        interval: Duration,
+    ) -> Self {
         Self {
             pool,
-            metadata,
+            trino,
+            inventory_table: inventory_table.into(),
             interval,
         }
     }
@@ -37,7 +53,11 @@ impl Tracker {
                 biased;
                 _ = &mut shutdown => break,
                 _ = interval.tick() => {
-                    execute(&self.pool, &self.metadata).await?;
+                    if let Err(err) = execute(&self.pool, &self.trino, &self.inventory_table).await {
+                        // A Trino hiccup shouldn't take the daemon down; the next
+                        // tick retries against unchanged local data.
+                        tracing::error!(?err, "tracker execute failed");
+                    }
                 }
             }
         }
@@ -48,29 +68,31 @@ impl Tracker {
     }
 }
 
-pub async fn execute(pool: &Pool<Postgres>, metadata: &Pool<Postgres>) -> anyhow::Result<()> {
+pub async fn execute(
+    pool: &Pool<Postgres>,
+    trino: &trino_client::Client,
+    inventory_table: &str,
+) -> anyhow::Result<()> {
     tracing::info!("starting execute");
     let start = Instant::now();
 
-    const BATCH_SIZE: usize = 1_000;
+    let mut after = String::new();
+    let mut total: u64 = 0;
 
-    let total: u64 = IOTHotspotInfo::stream(metadata)
-        .inspect_err(|err| {
-            tracing::error!(?err, "unexpected error streaming IOTHotspotInfo");
-        })
-        .filter_map(|res| async move { res.ok() })
-        .filter_map(|mhi| async move { mhi.to_gateway().ok().flatten() })
-        .chunks(BATCH_SIZE)
-        .fold(0, |total, batch| async move {
-            match Gateway::insert_bulk(pool, &batch).await {
-                Ok(affected) => total + affected,
-                Err(err) => {
-                    tracing::error!(?err, "failed to insert gateway batch");
-                    total
-                }
+    loop {
+        let rows = trino::fetch_page(trino, inventory_table, &after).await?;
+        let Some(cursor) = trino::page_cursor(&rows) else {
+            break;
+        };
+        after = cursor;
+
+        for batch in trino::page_to_gateways(&rows).chunks(BATCH_SIZE) {
+            match Gateway::insert_bulk(pool, batch).await {
+                Ok(affected) => total += affected,
+                Err(err) => tracing::error!(?err, "failed to insert gateway batch"),
             }
-        })
-        .await;
+        }
+    }
 
     let elapsed = start.elapsed();
     tracing::info!(?elapsed, affected = total, "done execute");

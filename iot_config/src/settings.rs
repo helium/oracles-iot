@@ -26,9 +26,12 @@ pub struct Settings {
     pub database: db_store::Settings,
     #[serde(with = "humantime_serde", default = "default_gateway_tracker_interval")]
     pub gateway_tracker_interval: std::time::Duration,
-    /// Settings passed to the db_store crate for connecting to
-    /// the database for Solana on-chain data
-    pub metadata: db_store::Settings,
+    /// Trino query client. Required: the gateway tracker reads the on-chain hotspot
+    /// inventory from it, and the sub-DAO service reads epoch reward info from it.
+    /// The cluster must expose both the `network` catalog (Iceberg, holding
+    /// `chain.iot_hotspot_inventory`) and the `solana` catalog (the on-chain indexer
+    /// Postgres, holding `public.sub_dao_epoch_infos`).
+    pub trino: trino_client::Settings,
     pub metrics: poc_metrics::Settings,
 }
 

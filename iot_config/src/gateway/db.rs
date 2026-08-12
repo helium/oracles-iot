@@ -6,7 +6,8 @@ use sqlx::{postgres::PgRow, FromRow, PgExecutor, PgPool, Postgres, QueryBuilder,
 #[derive(Debug, Clone)]
 pub struct Gateway {
     pub address: PublicKeyBinary,
-    // When the record was first created from metadata DB
+    // When the record was first seen. Insert-only: preserved on conflict, so a
+    // later inventory row never moves it (see Gateway::insert_bulk).
     pub created_at: DateTime<Utc>,
     pub elevation: Option<u32>,
     pub gain: Option<u32>,
@@ -19,8 +20,8 @@ pub struct Gateway {
     pub location_asserts: Option<u32>,
     // When location last changed, set to refreshed_at (updated via SQL query see Gateway::insert)
     pub location_changed_at: Option<DateTime<Utc>>,
-    // When record was last updated from metadata DB (could be set to now if no metadata DB info)
-    pub refreshed_at: Option<DateTime<Utc>>,
+    // The on-chain change time of the inventory row this gateway was built from.
+    pub refreshed_at: DateTime<Utc>,
     // When record was last updated
     pub updated_at: DateTime<Utc>,
 }
@@ -64,9 +65,10 @@ impl Gateway {
                 .push_bind(g.updated_at);
         });
 
+        // created_at is deliberately absent from the update list: it is first-seen,
+        // not last-updated, so the original insert's value is kept.
         qb.push(
-            " ON CONFLICT (address) DO UPDATE SET 
-                created_at = EXCLUDED.created_at,
+            " ON CONFLICT (address) DO UPDATE SET
                 elevation = EXCLUDED.elevation,
                 gain = EXCLUDED.gain,
                 hash = EXCLUDED.hash,
