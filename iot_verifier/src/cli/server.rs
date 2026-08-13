@@ -27,7 +27,7 @@ impl Cmd {
         custom_tracing::init(settings.log.clone(), settings.custom_tracing.clone()).await?;
 
         poc_metrics::start_metrics(&settings.metrics)?;
-        tracing::info!("Settings: {}", settings.as_json_pretty());
+        tracing::info!("Starting IoT Verifier Server");
 
         let pool = settings.database.connect(env!("CARGO_PKG_NAME")).await?;
         sqlx::migrate!().run(&pool).await?;
