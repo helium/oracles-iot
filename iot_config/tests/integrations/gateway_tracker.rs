@@ -19,14 +19,13 @@ fn location(hex: &str) -> u64 {
     u64::from_str_radix(hex, 16).unwrap()
 }
 
-/// A millisecond-aligned timestamp `secs_ago` before now.
+/// A microsecond-aligned timestamp `secs_ago` before now.
 ///
-/// The inventory's `timestamp` is selected as epoch milliseconds, so anything finer
-/// is truncated on the way through. Seeding aligned values keeps the assertions
-/// exact instead of hiding the truncation behind a fuzzy comparison.
+/// Iceberg's timestamptz and postgres' both hold microseconds, so a `Utc::now()`
+/// carrying nanoseconds would be truncated somewhere in the round trip. Aligning up
+/// front keeps the assertions exact rather than fuzzy.
 fn ts(secs_ago: i64) -> DateTime<Utc> {
-    let millis = (Utc::now() - chrono::Duration::seconds(secs_ago)).timestamp_millis();
-    DateTime::from_timestamp_millis(millis).unwrap()
+    common::nanos_trunc(Utc::now() - chrono::Duration::seconds(secs_ago))
 }
 
 /// Run one tracker tick against the seeded inventory.

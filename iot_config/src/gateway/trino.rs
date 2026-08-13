@@ -11,7 +11,7 @@
 //! not in dbt). They are written NULL. Only `gain` is served, and
 //! `From<Gateway> for IotMetadata` already substitutes `DEFAULT_GAIN` for a NULL.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, FixedOffset, Utc};
 use helium_crypto::PublicKeyBinary;
 use std::hash::{DefaultHasher, Hasher};
 use trino_client::TrinoFromRow;
@@ -37,12 +37,9 @@ pub struct InventoryRow {
     asserted_hex: Option<String>,
     elevation: Option<i32>,
     is_data_only: Option<bool>,
-    /// The on-chain change time as epoch milliseconds.
-    ///
-    /// Selected as a BIGINT rather than the underlying `timestamp(6) with time
-    /// zone`: `trino-rust-client` decodes timestamptz with a millisecond format
-    /// string, which a microsecond column does not match.
-    changed_at_ms: i64,
+    /// The on-chain change time. `timestamp(6) with time zone` deserializes
+    /// straight into this with full microsecond precision.
+    changed_at: DateTime<FixedOffset>,
 }
 
 impl InventoryRow {
@@ -96,14 +93,7 @@ impl InventoryRow {
             },
         };
 
-        let Some(changed_at) = DateTime::<Utc>::from_timestamp_millis(self.changed_at_ms) else {
-            tracing::warn!(
-                pub_key = %self.pub_key,
-                changed_at_ms = self.changed_at_ms,
-                "skipping inventory row with out-of-range timestamp"
-            );
-            return None;
-        };
+        let changed_at = self.changed_at.with_timezone(&Utc);
 
         let elevation = self.elevation.map(|e| e as u32);
         let is_full_hotspot = self.is_data_only.map(|data_only| !data_only);
@@ -151,7 +141,7 @@ fn page_statement(table: &str, after: &str) -> trino_client::TypedStatement<Inve
                 asserted_hex,
                 elevation,
                 is_data_only,
-                CAST(to_unixtime("timestamp") * 1000 AS BIGINT) AS changed_at_ms
+                "timestamp" AS changed_at
             FROM {table}
             WHERE pub_key > :after
             ORDER BY pub_key
@@ -183,7 +173,9 @@ mod tests {
             asserted_hex: asserted_hex.map(str::to_string),
             elevation: Some(5),
             is_data_only: Some(false),
-            changed_at_ms: 1_700_000_000_000,
+            // Sub-millisecond digits on purpose: the column is microsecond
+            // precision and must survive intact.
+            changed_at: "2023-11-14T22:13:20.123456Z".parse().unwrap(),
         }
     }
 
@@ -204,6 +196,13 @@ mod tests {
         // on-chain change time, not now.
         assert_eq!(gateway.refreshed_at, gateway.location_changed_at.unwrap());
         assert_eq!(gateway.created_at, gateway.refreshed_at);
+        // Microseconds survive: the column is timestamp(6) and is read as one.
+        assert_eq!(
+            gateway.refreshed_at,
+            "2023-11-14T22:13:20.123456Z"
+                .parse::<DateTime<Utc>>()
+                .unwrap()
+        );
     }
 
     #[test]
