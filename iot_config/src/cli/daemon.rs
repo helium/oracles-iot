@@ -15,7 +15,7 @@ impl Daemon {
     pub async fn run(&self, settings: &Settings) -> anyhow::Result<()> {
         custom_tracing::init(settings.log.clone(), settings.custom_tracing.clone()).await?;
 
-        tracing::info!("Starting IoT Config Daemon");
+        tracing::info!("Settings: {}", serde_json::to_string_pretty(settings)?);
 
         // Install prometheus metrics exporter
         poc_metrics::start_metrics(&settings.metrics)?;
