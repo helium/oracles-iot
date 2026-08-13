@@ -84,7 +84,6 @@ This repository depends on shared infrastructure libraries from the [oracles](ht
 - `price-tracker`: Price tracking utilities
 - `reward-scheduler`: Reward scheduling
 - `solana`: Solana blockchain integration
-- `denylist`: Denylist management
 
 ## Development
 

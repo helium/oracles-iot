@@ -7,7 +7,6 @@ pub mod gateway_updater;
 pub mod iceberg;
 pub mod meta;
 pub mod packet_loader;
-pub mod region_cache;
 pub mod reward_share;
 pub mod rewarder;
 mod settings;
