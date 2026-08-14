@@ -1,191 +1,255 @@
 use crate::common::{
     self,
-    gateway_metadata_db::{
-        create_tables, insert_gateway, insert_gateway_with_invalid_key, insert_iot_hotspot_infos,
+    chain_trino::{
+        harness_with_inventory, invalid_inventory_row, inventory_row, inventory_table_name,
+        seed_inventory, trino_client,
     },
     make_keypair,
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
+use helium_crypto::PublicKeyBinary;
 use iot_config::gateway::{db::Gateway, tracker};
 use sqlx::PgPool;
 
+/// H3 cells, as the unprefixed lowercase hex strings the inventory stores.
+const HEX_1: &str = "8c2681a3064d9ff";
+const HEX_2: &str = "8c2681a3064dbff";
+
+fn location(hex: &str) -> u64 {
+    u64::from_str_radix(hex, 16).unwrap()
+}
+
+/// A microsecond-aligned timestamp `secs_ago` before now.
+///
+/// Iceberg's timestamptz and postgres' both hold microseconds, so a `Utc::now()`
+/// carrying nanoseconds would be truncated somewhere in the round trip. Aligning up
+/// front keeps the assertions exact rather than fuzzy.
+fn ts(secs_ago: i64) -> DateTime<Utc> {
+    common::nanos_trunc(Utc::now() - chrono::Duration::seconds(secs_ago))
+}
+
+/// Run one tracker tick against the seeded inventory.
+async fn execute(
+    pool: &PgPool,
+    trino: &trino_client::Client,
+    inventory_table: &str,
+) -> anyhow::Result<()> {
+    tracker::execute(pool, trino, inventory_table).await
+}
+
 #[sqlx::test]
-async fn execute_test(pool: PgPool) -> anyhow::Result<()> {
-    let pubkey1 = make_keypair().public_key().clone();
-    let location = 631_711_281_837_647_359_i64;
-    let now = Utc::now() - chrono::Duration::seconds(10);
+async fn maps_inventory_rows_onto_gateways(pool: PgPool) -> anyhow::Result<()> {
+    let pubkey: PublicKeyBinary = make_keypair().public_key().clone().into();
+    let changed_at = ts(10);
 
-    // Ensure tables exist
-    create_tables(&pool).await?;
+    let h = harness_with_inventory().await?;
+    let trino = trino_client(&h).await?;
+    let table = inventory_table_name(&h);
 
-    // Insert test data into iot_hotspot_infos
-    insert_gateway(
-        &pool,
-        "address1",             // address (PRIMARY KEY)
-        "asset1",               // asset
-        Some(location),         // location
-        Some(1),                // elevation
-        Some(2),                // gain
-        Some(true),             // is_full_hotspot
-        Some(3),                // num_location_asserts
-        Some(true),             // is_active
-        Some(0),                // dc_onboarding_fee_paid
-        now,                    // created_at
-        Some(now),              // refreshed_at
-        Some(0),                // last_block
-        pubkey1.clone().into(), // key (PublicKeyBinary)
+    seed_inventory(
+        &h,
+        "initial",
+        vec![inventory_row(
+            &pubkey,
+            Some(HEX_1),
+            Some(1),
+            Some(false),
+            changed_at,
+        )],
     )
     .await?;
 
-    // Execute tracker logic
-    tracker::execute(&pool, &pool).await?;
+    execute(&pool, &trino, &table).await?;
 
-    // Retrieve gateway record and assert fields
-    let gateway = Gateway::get_by_address(&pool, &pubkey1.clone().into())
+    let gateway = Gateway::get_by_address(&pool, &pubkey)
         .await?
         .expect("gateway not found");
 
-    assert_eq!(gateway.created_at, common::nanos_trunc(now));
+    assert_eq!(gateway.location, Some(location(HEX_1)));
     assert_eq!(gateway.elevation, Some(1));
-    assert_eq!(gateway.gain, Some(2));
-    assert_eq!(gateway.is_active, Some(true));
+    // is_data_only = false means it is a full hotspot.
     assert_eq!(gateway.is_full_hotspot, Some(true));
-    assert!(gateway.last_changed_at > now);
-    assert_eq!(gateway.location, Some(location as u64));
-    assert_eq!(gateway.location_asserts, Some(3));
-    assert!(gateway.location_changed_at.is_some());
+    // Not carried by the chain pipeline.
+    assert_eq!(gateway.gain, None);
+    assert_eq!(gateway.is_active, None);
+    assert_eq!(gateway.location_asserts, None);
+    // refreshed_at is the on-chain change time, not the time of the run.
+    assert_eq!(gateway.refreshed_at, common::nanos_trunc(changed_at));
+    assert_eq!(gateway.created_at, common::nanos_trunc(changed_at));
     assert_eq!(
-        gateway.location_changed_at.unwrap(),
-        common::nanos_trunc(now)
+        gateway.location_changed_at,
+        Some(common::nanos_trunc(changed_at))
     );
-    assert!(gateway.refreshed_at.is_some());
-    assert_eq!(gateway.refreshed_at.unwrap(), common::nanos_trunc(now));
-    assert!(gateway.updated_at > now);
-
-    let refreshed_at = Utc::now();
-    let location = 666_711_281_837_647_360_i64;
-    // Insert test data into iot_hotspot_infos
-    insert_iot_hotspot_infos(
-        &pool,
-        "address1",         // address (PRIMARY KEY)
-        "asset1",           // asset
-        Some(location),     // location
-        Some(10),           // elevation
-        Some(20),           // gain
-        Some(false),        // is_full_hotspot
-        Some(30),           // num_location_asserts
-        Some(false),        // is_active
-        Some(0),            // dc_onboarding_fee_paid
-        now,                // created_at
-        Some(refreshed_at), // refreshed_at
-        Some(0),            // last_block
-    )
-    .await?;
-
-    // Execute tracker logic
-    tracker::execute(&pool, &pool).await?;
-
-    // Retrieve gateway record and assert fields
-    let gateway = Gateway::get_by_address(&pool, &pubkey1.clone().into())
-        .await?
-        .expect("gateway not found");
-
-    assert_eq!(gateway.created_at, common::nanos_trunc(now));
-    assert_eq!(gateway.elevation, Some(10));
-    assert_eq!(gateway.gain, Some(20));
-    assert_eq!(gateway.is_active, Some(false));
-    assert_eq!(gateway.is_full_hotspot, Some(false));
-    assert_eq!(gateway.last_changed_at, common::nanos_trunc(refreshed_at));
-    assert_eq!(gateway.location, Some(location as u64));
-    assert_eq!(gateway.location_asserts, Some(30));
-    assert!(gateway.location_changed_at.is_some());
-    assert_eq!(
-        gateway.location_changed_at.unwrap(),
-        common::nanos_trunc(refreshed_at)
-    );
-    assert!(gateway.refreshed_at.is_some());
-    assert_eq!(
-        gateway.refreshed_at.unwrap(),
-        common::nanos_trunc(refreshed_at)
-    );
-    assert!(gateway.updated_at > refreshed_at);
 
     Ok(())
 }
 
 #[sqlx::test]
-async fn execute_test_with_invalid_entity_key(pool: PgPool) -> anyhow::Result<()> {
-    let pubkey1 = make_keypair().public_key().clone();
-    let location = 631_711_281_837_647_359_i64;
-    let now = Utc::now() - chrono::Duration::seconds(10);
+async fn location_change_advances_changed_at_and_keeps_created_at(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let pubkey: PublicKeyBinary = make_keypair().public_key().clone().into();
+    let first_seen = ts(60);
 
-    // Ensure tables exist
-    create_tables(&pool).await?;
+    let h = harness_with_inventory().await?;
+    let trino = trino_client(&h).await?;
+    let table = inventory_table_name(&h);
 
-    // Insert a valid gateway
-    insert_gateway(
-        &pool,
-        "valid_address",        // address (PRIMARY KEY)
-        "valid_asset",          // asset
-        Some(location),         // location
-        Some(1),                // elevation
-        Some(2),                // gain
-        Some(true),             // is_full_hotspot
-        Some(3),                // num_location_asserts
-        Some(true),             // is_active
-        Some(0),                // dc_onboarding_fee_paid
-        now,                    // created_at
-        Some(now),              // refreshed_at
-        Some(0),                // last_block
-        pubkey1.clone().into(), // key (PublicKeyBinary)
+    seed_inventory(
+        &h,
+        "initial",
+        vec![inventory_row(
+            &pubkey,
+            Some(HEX_1),
+            Some(1),
+            Some(false),
+            first_seen,
+        )],
     )
     .await?;
+    execute(&pool, &trino, &table).await?;
 
-    // Insert a gateway with an invalid entity_key (like the real-world failures we found)
-    // This uses bytes that start with 0x00 which fail helium-crypto validation
-    let invalid_key_bytes =
-        hex::decode("00d34decd6cdfed91784d98d7525fb8a3c1ee381d7052bfcb3d1c90b3f54b09fc9").unwrap();
-
-    insert_gateway_with_invalid_key(
-        &pool,
-        "invalid_address", // address (PRIMARY KEY)
-        "invalid_asset",   // asset
-        Some(location),    // location
-        Some(5),           // elevation
-        Some(6),           // gain
-        Some(false),       // is_full_hotspot
-        Some(7),           // num_location_asserts
-        Some(false),       // is_active
-        Some(0),           // dc_onboarding_fee_paid
-        now,               // created_at
-        Some(now),         // refreshed_at
-        Some(0),           // last_block
-        invalid_key_bytes, // invalid entity_key bytes
+    // The dbt model keeps one row per pub_key; simulate the refresh by pointing the
+    // tracker at a table holding only the newer row.
+    let h2 = harness_with_inventory().await?;
+    let trino2 = trino_client(&h2).await?;
+    let table2 = inventory_table_name(&h2);
+    let moved_at = ts(0);
+    seed_inventory(
+        &h2,
+        "moved",
+        vec![inventory_row(
+            &pubkey,
+            Some(HEX_2),
+            Some(10),
+            Some(true),
+            moved_at,
+        )],
     )
     .await?;
+    execute(&pool, &trino2, &table2).await?;
 
-    // Execute tracker logic - should process valid gateway and skip invalid one
-    tracker::execute(&pool, &pool).await?;
-
-    // Verify that the valid gateway was inserted
-    let gateway = Gateway::get_by_address(&pool, &pubkey1.clone().into())
+    let gateway = Gateway::get_by_address(&pool, &pubkey)
         .await?
-        .expect("valid gateway should be found");
+        .expect("gateway not found");
 
-    assert_eq!(gateway.created_at, common::nanos_trunc(now));
-    assert_eq!(gateway.elevation, Some(1));
-    assert_eq!(gateway.gain, Some(2));
-    assert_eq!(gateway.is_active, Some(true));
-    assert_eq!(gateway.is_full_hotspot, Some(true));
-    assert_eq!(gateway.location, Some(location as u64));
-    assert_eq!(gateway.location_asserts, Some(3));
+    assert_eq!(gateway.location, Some(location(HEX_2)));
+    assert_eq!(gateway.elevation, Some(10));
+    assert_eq!(gateway.is_full_hotspot, Some(false));
+    assert_eq!(gateway.refreshed_at, common::nanos_trunc(moved_at));
+    // Both advance because location and hash changed.
+    assert_eq!(gateway.last_changed_at, common::nanos_trunc(moved_at));
+    assert_eq!(
+        gateway.location_changed_at,
+        Some(common::nanos_trunc(moved_at))
+    );
+    // created_at is insert-only: still the first sighting.
+    assert_eq!(gateway.created_at, common::nanos_trunc(first_seen));
 
-    // Verify that there's only 1 gateway in the database (the invalid one was skipped)
+    Ok(())
+}
+
+#[sqlx::test]
+async fn unasserted_hotspot_has_no_location(pool: PgPool) -> anyhow::Result<()> {
+    let pubkey: PublicKeyBinary = make_keypair().public_key().clone().into();
+    let changed_at = ts(10);
+
+    let h = harness_with_inventory().await?;
+    let trino = trino_client(&h).await?;
+    let table = inventory_table_name(&h);
+
+    seed_inventory(
+        &h,
+        "unasserted",
+        vec![inventory_row(&pubkey, None, None, Some(false), changed_at)],
+    )
+    .await?;
+    execute(&pool, &trino, &table).await?;
+
+    let gateway = Gateway::get_by_address(&pool, &pubkey)
+        .await?
+        .expect("gateway not found");
+
+    assert_eq!(gateway.location, None);
+    assert_eq!(gateway.location_changed_at, None);
+    assert_eq!(gateway.elevation, None);
+
+    Ok(())
+}
+
+#[sqlx::test]
+async fn unparseable_pub_key_is_skipped_not_fatal(pool: PgPool) -> anyhow::Result<()> {
+    let pubkey: PublicKeyBinary = make_keypair().public_key().clone().into();
+    let changed_at = ts(10);
+
+    let h = harness_with_inventory().await?;
+    let trino = trino_client(&h).await?;
+    let table = inventory_table_name(&h);
+
+    seed_inventory(
+        &h,
+        "mixed",
+        vec![
+            inventory_row(&pubkey, Some(HEX_1), Some(1), Some(false), changed_at),
+            invalid_inventory_row("not-a-valid-b58-pubkey", changed_at),
+        ],
+    )
+    .await?;
+
+    execute(&pool, &trino, &table).await?;
+
+    assert!(Gateway::get_by_address(&pool, &pubkey).await?.is_some());
+
     let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM gateways")
         .fetch_one(&pool)
         .await?;
+    assert_eq!(count, 1, "only the valid gateway should be inserted");
 
-    assert_eq!(count, 1, "Only the valid gateway should be inserted");
+    Ok(())
+}
+
+/// The tracker chunks at `BATCH_SIZE` (1000), which no test seeds past. Drive
+/// `stream_gateways` directly with a small chunk instead, so the boundary between
+/// batches is actually crossed rather than assumed.
+#[tokio::test]
+async fn stream_gateways_spans_multiple_chunks() -> anyhow::Result<()> {
+    use futures::StreamExt;
+
+    let changed_at = ts(10);
+    let keys: Vec<PublicKeyBinary> = (0..5)
+        .map(|_| make_keypair().public_key().clone().into())
+        .collect();
+
+    let h = harness_with_inventory().await?;
+    let trino = trino_client(&h).await?;
+
+    seed_inventory(
+        &h,
+        "many",
+        keys.iter()
+            .map(|k| inventory_row(k, Some(HEX_1), Some(1), Some(false), changed_at))
+            .collect(),
+    )
+    .await?;
+
+    let batches = iot_config::gateway::trino::stream_gateways(&trino, &inventory_table_name(&h), 2);
+    futures::pin_mut!(batches);
+
+    let mut sizes = Vec::new();
+    let mut seen = Vec::new();
+    while let Some(batch) = batches.next().await {
+        let batch = batch?;
+        sizes.push(batch.len());
+        seen.extend(batch.into_iter().map(|g| g.address));
+    }
+
+    // 5 rows at 2 per chunk: three batches, the last one short.
+    assert_eq!(sizes, vec![2, 2, 1], "unexpected chunking");
+    assert_eq!(seen.len(), 5);
+    seen.sort();
+    let mut expected = keys;
+    expected.sort();
+    assert_eq!(seen, expected, "every seeded gateway must survive chunking");
 
     Ok(())
 }

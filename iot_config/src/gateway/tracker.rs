@@ -1,15 +1,25 @@
-use crate::gateway::{db::Gateway, metadata_db::IOTHotspotInfo};
-use futures_util::{StreamExt, TryStreamExt};
+use crate::gateway::{db::Gateway, trino};
+use futures::StreamExt;
 use sqlx::{Pool, Postgres};
 use std::time::{Duration, Instant};
 use task_manager::ManagedTask;
 
 const EXECUTE_DURATION_METRIC: &str =
     concat!(env!("CARGO_PKG_NAME"), "-", "tracker-execute-duration");
+/// Incremented whenever a tick fails. The duration histogram is only recorded on
+/// success, so without this a permanently broken tracker (expired JWT, renamed
+/// catalog) would emit no metric at all and be indistinguishable from a scrape gap
+/// while `gateways` silently goes stale.
+const EXECUTE_FAILURE_METRIC: &str =
+    concat!(env!("CARGO_PKG_NAME"), "-", "tracker-execute-failures");
+
+/// Rows per `INSERT ... ON CONFLICT` statement.
+const BATCH_SIZE: usize = 1_000;
 
 pub struct Tracker {
     pool: Pool<Postgres>,
-    metadata: Pool<Postgres>,
+    trino: trino_client::Client,
+    inventory_table: String,
     interval: Duration,
 }
 
@@ -20,10 +30,11 @@ impl ManagedTask for Tracker {
 }
 
 impl Tracker {
-    pub fn new(pool: Pool<Postgres>, metadata: Pool<Postgres>, interval: Duration) -> Self {
+    pub fn new(pool: Pool<Postgres>, trino: trino_client::Client, interval: Duration) -> Self {
         Self {
             pool,
-            metadata,
+            trino,
+            inventory_table: trino::IOT_HOTSPOT_INVENTORY_TABLE.to_string(),
             interval,
         }
     }
@@ -37,7 +48,13 @@ impl Tracker {
                 biased;
                 _ = &mut shutdown => break,
                 _ = interval.tick() => {
-                    execute(&self.pool, &self.metadata).await?;
+                    if let Err(err) = execute(&self.pool, &self.trino, &self.inventory_table).await {
+                        // A Trino hiccup shouldn't take the daemon down; the next
+                        // tick retries against unchanged local data. Counted so a
+                        // persistent failure is alertable rather than just a log line.
+                        metrics::counter!(EXECUTE_FAILURE_METRIC).increment(1);
+                        tracing::error!(?err, "tracker execute failed");
+                    }
                 }
             }
         }
@@ -48,29 +65,28 @@ impl Tracker {
     }
 }
 
-pub async fn execute(pool: &Pool<Postgres>, metadata: &Pool<Postgres>) -> anyhow::Result<()> {
+pub async fn execute(
+    pool: &Pool<Postgres>,
+    trino: &trino_client::Client,
+    inventory_table: &str,
+) -> anyhow::Result<()> {
     tracing::info!("starting execute");
     let start = Instant::now();
 
-    const BATCH_SIZE: usize = 1_000;
+    let mut total: u64 = 0;
 
-    let total: u64 = IOTHotspotInfo::stream(metadata)
-        .inspect_err(|err| {
-            tracing::error!(?err, "unexpected error streaming IOTHotspotInfo");
-        })
-        .filter_map(|res| async move { res.ok() })
-        .filter_map(|mhi| async move { mhi.to_gateway().ok().flatten() })
-        .chunks(BATCH_SIZE)
-        .fold(0, |total, batch| async move {
-            match Gateway::insert_bulk(pool, &batch).await {
-                Ok(affected) => total + affected,
-                Err(err) => {
-                    tracing::error!(?err, "failed to insert gateway batch");
-                    total
-                }
-            }
-        })
-        .await;
+    let batches = trino::stream_gateways(trino, inventory_table, BATCH_SIZE);
+    futures::pin_mut!(batches);
+
+    while let Some(batch) = batches.next().await {
+        // A Trino failure aborts the tick; a bad insert is logged and the rest of
+        // the inventory still lands.
+        let batch = batch?;
+        match Gateway::insert_bulk(pool, &batch).await {
+            Ok(affected) => total += affected,
+            Err(err) => tracing::error!(?err, "failed to insert gateway batch"),
+        }
+    }
 
     let elapsed = start.elapsed();
     tracing::info!(?elapsed, affected = total, "done execute");
