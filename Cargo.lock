@@ -2618,7 +2618,7 @@ dependencies = [
 [[package]]
 name = "custom-tracing"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#61b5635dfbb0e7108444a3005861c77de8bbbab5"
+source = "git+https://github.com/helium/oracles.git?branch=main#5d49ba839ebaf6b686ca2ca7d9c81a1cbc5aa8c4"
 dependencies = [
  "anyhow",
  "bs58",
@@ -2725,7 +2725,7 @@ checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 [[package]]
 name = "db-store"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#61b5635dfbb0e7108444a3005861c77de8bbbab5"
+source = "git+https://github.com/helium/oracles.git?branch=main#5d49ba839ebaf6b686ca2ca7d9c81a1cbc5aa8c4"
 dependencies = [
  "aws-config",
  "aws-credential-types",
@@ -3291,7 +3291,7 @@ checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 [[package]]
 name = "file-store"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#61b5635dfbb0e7108444a3005861c77de8bbbab5"
+source = "git+https://github.com/helium/oracles.git?branch=main#5d49ba839ebaf6b686ca2ca7d9c81a1cbc5aa8c4"
 dependencies = [
  "async-compression",
  "async-trait",
@@ -3325,7 +3325,7 @@ dependencies = [
 [[package]]
 name = "file-store-oracles"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#61b5635dfbb0e7108444a3005861c77de8bbbab5"
+source = "git+https://github.com/helium/oracles.git?branch=main#5d49ba839ebaf6b686ca2ca7d9c81a1cbc5aa8c4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3979,7 +3979,7 @@ dependencies = [
 [[package]]
 name = "helium-iceberg"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#61b5635dfbb0e7108444a3005861c77de8bbbab5"
+source = "git+https://github.com/helium/oracles.git?branch=main#5d49ba839ebaf6b686ca2ca7d9c81a1cbc5aa8c4"
 dependencies = [
  "arrow-array",
  "arrow-ipc",
@@ -6393,7 +6393,7 @@ dependencies = [
 [[package]]
 name = "poc-metrics"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#61b5635dfbb0e7108444a3005861c77de8bbbab5"
+source = "git+https://github.com/helium/oracles.git?branch=main#5d49ba839ebaf6b686ca2ca7d9c81a1cbc5aa8c4"
 dependencies = [
  "futures",
  "metrics",
@@ -6511,7 +6511,7 @@ dependencies = [
 [[package]]
 name = "price-tracker"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#61b5635dfbb0e7108444a3005861c77de8bbbab5"
+source = "git+https://github.com/helium/oracles.git?branch=main#5d49ba839ebaf6b686ca2ca7d9c81a1cbc5aa8c4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7243,7 +7243,7 @@ dependencies = [
 [[package]]
 name = "reward-scheduler"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#61b5635dfbb0e7108444a3005861c77de8bbbab5"
+source = "git+https://github.com/helium/oracles.git?branch=main#5d49ba839ebaf6b686ca2ca7d9c81a1cbc5aa8c4"
 dependencies = [
  "chrono",
  "thiserror 1.0.69",
@@ -8033,7 +8033,7 @@ dependencies = [
 [[package]]
 name = "solana"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#61b5635dfbb0e7108444a3005861c77de8bbbab5"
+source = "git+https://github.com/helium/oracles.git?branch=main#5d49ba839ebaf6b686ca2ca7d9c81a1cbc5aa8c4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -11324,7 +11324,7 @@ checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 [[package]]
 name = "task-manager"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#61b5635dfbb0e7108444a3005861c77de8bbbab5"
+source = "git+https://github.com/helium/oracles.git?branch=main#5d49ba839ebaf6b686ca2ca7d9c81a1cbc5aa8c4"
 dependencies = [
  "futures",
  "futures-util",
@@ -11493,7 +11493,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 [[package]]
 name = "tls-init"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#61b5635dfbb0e7108444a3005861c77de8bbbab5"
+source = "git+https://github.com/helium/oracles.git?branch=main#5d49ba839ebaf6b686ca2ca7d9c81a1cbc5aa8c4"
 dependencies = [
  "ctor",
  "hyper-rustls 0.27.7",
@@ -11901,9 +11901,11 @@ checksum = "593eddbc8a11f3e099e942c8c065fe376b9d1776741430888f2796682e08ab43"
 [[package]]
 name = "trino-client"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#61b5635dfbb0e7108444a3005861c77de8bbbab5"
+source = "git+https://github.com/helium/oracles.git?branch=main#5d49ba839ebaf6b686ca2ca7d9c81a1cbc5aa8c4"
 dependencies = [
+ "async-stream",
  "chrono",
+ "futures",
  "humantime-serde",
  "notify",
  "serde",

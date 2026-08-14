@@ -207,3 +207,49 @@ async fn unparseable_pub_key_is_skipped_not_fatal(pool: PgPool) -> anyhow::Resul
 
     Ok(())
 }
+
+/// The tracker chunks at `BATCH_SIZE` (1000), which no test seeds past. Drive
+/// `stream_gateways` directly with a small chunk instead, so the boundary between
+/// batches is actually crossed rather than assumed.
+#[tokio::test]
+async fn stream_gateways_spans_multiple_chunks() -> anyhow::Result<()> {
+    use futures::StreamExt;
+
+    let changed_at = ts(10);
+    let keys: Vec<PublicKeyBinary> = (0..5)
+        .map(|_| make_keypair().public_key().clone().into())
+        .collect();
+
+    let h = harness_with_inventory().await?;
+    let trino = trino_client(&h).await?;
+
+    seed_inventory(
+        &h,
+        "many",
+        keys.iter()
+            .map(|k| inventory_row(k, Some(HEX_1), Some(1), Some(false), changed_at))
+            .collect(),
+    )
+    .await?;
+
+    let batches = iot_config::gateway::trino::stream_gateways(&trino, &inventory_table_name(&h), 2);
+    futures::pin_mut!(batches);
+
+    let mut sizes = Vec::new();
+    let mut seen = Vec::new();
+    while let Some(batch) = batches.next().await {
+        let batch = batch?;
+        sizes.push(batch.len());
+        seen.extend(batch.into_iter().map(|g| g.address));
+    }
+
+    // 5 rows at 2 per chunk: three batches, the last one short.
+    assert_eq!(sizes, vec![2, 2, 1], "unexpected chunking");
+    assert_eq!(seen.len(), 5);
+    seen.sort();
+    let mut expected = keys;
+    expected.sort();
+    assert_eq!(seen, expected, "every seeded gateway must survive chunking");
+
+    Ok(())
+}

@@ -1,4 +1,5 @@
 use crate::gateway::{db::Gateway, trino};
+use futures::StreamExt;
 use sqlx::{Pool, Postgres};
 use std::time::{Duration, Instant};
 use task_manager::ManagedTask;
@@ -72,21 +73,18 @@ pub async fn execute(
     tracing::info!("starting execute");
     let start = Instant::now();
 
-    let mut after = String::new();
     let mut total: u64 = 0;
 
-    loop {
-        let rows = trino::fetch_page(trino, inventory_table, &after).await?;
-        let Some(cursor) = trino::page_cursor(&rows) else {
-            break;
-        };
-        after = cursor;
+    let batches = trino::stream_gateways(trino, inventory_table, BATCH_SIZE);
+    futures::pin_mut!(batches);
 
-        for batch in trino::page_to_gateways(&rows).chunks(BATCH_SIZE) {
-            match Gateway::insert_bulk(pool, batch).await {
-                Ok(affected) => total += affected,
-                Err(err) => tracing::error!(?err, "failed to insert gateway batch"),
-            }
+    while let Some(batch) = batches.next().await {
+        // A Trino failure aborts the tick; a bad insert is logged and the rest of
+        // the inventory still lands.
+        let batch = batch?;
+        match Gateway::insert_bulk(pool, &batch).await {
+            Ok(affected) => total += affected,
+            Err(err) => tracing::error!(?err, "failed to insert gateway batch"),
         }
     }
 

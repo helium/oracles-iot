@@ -12,6 +12,7 @@
 //! `From<Gateway> for IotMetadata` already substitutes `DEFAULT_GAIN` for a NULL.
 
 use chrono::{DateTime, FixedOffset, Utc};
+use futures::{Stream, StreamExt};
 use helium_crypto::PublicKeyBinary;
 use std::hash::{DefaultHasher, Hasher};
 use trino_client::TrinoFromRow;
@@ -23,13 +24,8 @@ use crate::gateway::db::Gateway;
 /// override pointing at their own harness catalog.
 pub const IOT_HOTSPOT_INVENTORY_TABLE: &str = "network.chain.iot_hotspot_inventory";
 
-/// Rows fetched per Trino query. `trino_client` has no cursor API — `get_all`
-/// buffers the whole result into a `Vec` — and the IoT fleet is order-1M rows, so
-/// the inventory is walked in keyset pages rather than materialized at once.
-const PAGE_SIZE: usize = 50_000;
-
 /// One row of the inventory. Field names must match the `SELECT ... AS` aliases in
-/// [`page_statement`].
+/// [`inventory_statement`].
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, TrinoFromRow)]
 pub struct InventoryRow {
     pub_key: String,
@@ -122,18 +118,23 @@ impl InventoryRow {
     }
 }
 
-/// Fetch one keyset page of the inventory, ordered by `pub_key` and starting
-/// strictly after `after`. An empty `after` starts from the beginning, since every
-/// b58 pubkey sorts after the empty string.
-pub async fn fetch_page(
+/// The whole inventory, in batches of `chunk` gateways.
+///
+/// One query, streamed and paged by the Trino client, rather than a keyset walk
+/// that re-scanned the table per page. Rows that fail to decode are logged and
+/// dropped, so a batch can be shorter than `chunk` — or empty — without that
+/// meaning the end of the stream.
+pub fn stream_gateways(
     client: &trino_client::Client,
     table: &str,
-    after: &str,
-) -> anyhow::Result<Vec<InventoryRow>> {
-    Ok(client.get_all(page_statement(table, after)).await?)
+    chunk: usize,
+) -> impl Stream<Item = anyhow::Result<Vec<Gateway>>> + Send + use<> {
+    client
+        .chunks(inventory_statement(table), chunk)
+        .map(|batch| Ok(rows_to_gateways(&batch?)))
 }
 
-fn page_statement(table: &str, after: &str) -> trino_client::TypedStatement<InventoryRow> {
+fn inventory_statement(table: &str) -> trino_client::TypedStatement<InventoryRow> {
     trino_client::Statement::new(format!(
         r#"
             SELECT
@@ -143,22 +144,13 @@ fn page_statement(table: &str, after: &str) -> trino_client::TypedStatement<Inve
                 is_data_only,
                 "timestamp" AS changed_at
             FROM {table}
-            WHERE pub_key > :after
-            ORDER BY pub_key
-            LIMIT {PAGE_SIZE}
         "#
     ))
-    .bind("after", after.to_string())
     .typed::<InventoryRow>()
 }
 
-/// The `pub_key` of the last row in a page, i.e. the cursor for the next one.
-pub fn page_cursor(rows: &[InventoryRow]) -> Option<String> {
-    rows.last().map(|row| row.pub_key.clone())
-}
-
-/// Map a page onto gateways, dropping rows that fail to decode.
-pub fn page_to_gateways(rows: &[InventoryRow]) -> Vec<Gateway> {
+/// Map a batch onto gateways, dropping rows that fail to decode.
+fn rows_to_gateways(rows: &[InventoryRow]) -> Vec<Gateway> {
     rows.iter().filter_map(InventoryRow::to_gateway).collect()
 }
 
@@ -181,6 +173,7 @@ mod tests {
 
     // A real b58 IoT hotspot key.
     const PUB_KEY: &str = "112NqN2WWMwtK29PMzRby62fDydBJfsCLkCAf392stdok48ovNT6";
+    const HEX: &str = "8828308280fffff";
 
     #[test]
     fn maps_an_asserted_row() {
@@ -264,8 +257,8 @@ mod tests {
     }
 
     #[test]
-    fn page_statement_binds_cursor_and_targets_table() {
-        let rendered = page_statement("cat.chain.iot_hotspot_inventory", "abc")
+    fn inventory_statement_selects_the_whole_table() {
+        let rendered = inventory_statement("cat.chain.iot_hotspot_inventory")
             .to_statement()
             .render()
             .unwrap();
@@ -273,15 +266,23 @@ mod tests {
             rendered.contains("cat.chain.iot_hotspot_inventory"),
             "{rendered}"
         );
-        // Bound params render as positional placeholders (EXECUTE IMMEDIATE).
-        assert!(rendered.contains("pub_key > ?"), "{rendered}");
-        assert!(rendered.contains("ORDER BY pub_key"), "{rendered}");
+        // The Trino client pages the result now, so the query carries no cursor,
+        // ordering or limit of its own.
+        assert!(!rendered.contains("LIMIT"), "{rendered}");
+        assert!(!rendered.contains("ORDER BY"), "{rendered}");
+        assert!(!rendered.contains("pub_key >"), "{rendered}");
     }
 
     #[test]
-    fn page_cursor_is_the_last_pub_key() {
-        assert_eq!(page_cursor(&[]), None);
-        let rows = vec![row("aaa", None), row("zzz", None)];
-        assert_eq!(page_cursor(&rows), Some("zzz".to_string()));
+    fn rows_to_gateways_drops_only_the_undecodable() {
+        let rows = vec![
+            row(PUB_KEY, Some(HEX)),
+            row("not-a-pubkey", Some(HEX)),
+            row(PUB_KEY, None),
+        ];
+        let gateways = rows_to_gateways(&rows);
+        assert_eq!(gateways.len(), 2);
+        assert_eq!(gateways[0].location, Some(0x8828308280fffff));
+        assert_eq!(gateways[1].location, None);
     }
 }
