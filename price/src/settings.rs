@@ -19,6 +19,11 @@ pub struct Settings {
     /// parameter for the HNT feed. Required.
     #[serde(default = "default_source")]
     pub source: String,
+    /// Bearer token sent in the `Authorization` header when fetching from
+    /// `source`. Required by the dourolabs Hermes endpoint. Prefer setting
+    /// this via the `PRICE__API_KEY` environment variable.
+    #[serde(skip_serializing)]
+    pub api_key: String,
     #[serde(default)]
     pub file_store: file_store::Settings,
     pub output_bucket: String,
@@ -41,7 +46,7 @@ pub struct Settings {
 }
 
 fn default_source() -> String {
-    "https://hermes.pyth.network/v2/updates/price/latest?ids[]=649fdd7ec08e8e2a20f425729854e90293dcbe2376abc47197a14da6ff339756".to_string()
+    "https://pyth.dourolabs.app/hermes/v2/updates/price/latest?ids[]=649fdd7ec08e8e2a20f425729854e90293dcbe2376abc47197a14da6ff339756".to_string()
 }
 
 fn default_log() -> String {
@@ -100,6 +105,7 @@ mod tests {
             [
                 ("PRICE__OUTPUT_BUCKET", Some("test-bucket".to_string())),
                 ("PRICE__DEFAULT_PRICE", Some("100000000".to_string())),
+                ("PRICE__API_KEY", Some("test-key".to_string())),
             ],
             || Settings::new::<PathBuf>(None),
         )?;
@@ -112,13 +118,15 @@ mod tests {
     #[test]
     fn test_settings_template_parses() -> anyhow::Result<()> {
         let template = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pkg/settings-template.toml");
-        // The template intentionally leaves output_bucket populated; no env
-        // overrides so we exercise pure file parsing.
-        let settings = temp_env::with_vars(Vec::<(&str, Option<String>)>::new(), || {
-            Settings::new(Some(&template))
-        })?;
+        // The template intentionally leaves output_bucket populated. `api_key`
+        // is required and ships commented out (set via env in production), so it
+        // must be supplied here for the parse to succeed.
+        let settings =
+            temp_env::with_vars([("PRICE__API_KEY", Some("test-key".to_string()))], || {
+                Settings::new(Some(&template))
+            })?;
 
-        assert!(settings.source.contains("hermes.pyth.network"));
+        assert!(settings.source.contains("pyth.dourolabs.app/hermes"));
         assert_eq!(settings.output_bucket, "price");
         assert_eq!(settings.interval, Duration::from_secs(60));
         Ok(())
@@ -131,6 +139,7 @@ mod tests {
             [
                 ("PRICE__OUTPUT_BUCKET", Some("test-bucket".to_string())),
                 ("PRICE__SOURCE", Some(url.to_string())),
+                ("PRICE__API_KEY", Some("test-key".to_string())),
             ],
             || Settings::new::<PathBuf>(None),
         )?;
