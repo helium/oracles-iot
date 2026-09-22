@@ -1,6 +1,5 @@
 use anyhow::Result;
 use clap::Parser;
-use file_store::file_upload;
 use file_store_oracles::traits::{FileSinkCommitStrategy, FileSinkRollTime, FileSinkWriteExt};
 use helium_proto::PriceReportV1;
 use price::{cli::check, PriceGenerator, Settings};
@@ -74,15 +73,13 @@ impl Server {
         // Install the prometheus metrics exporter
         poc_metrics::start_metrics(&settings.metrics)?;
 
-        let file_store_client = settings.file_store.connect().await;
-
-        // Initialize uploader
-        let (file_upload, file_upload_server) =
-            file_upload::FileUpload::new(file_store_client.clone(), settings.output_bucket.clone())
-                .await;
+        // One task however many buckets are configured. Added before the sink
+        // so LIFO shutdown stops the uploaders after it: the sink's last files
+        // are handed over before its uploader goes.
+        let (file_upload, file_upload_tasks) = settings.file_upload.connect().await?;
 
         let (price_sink, price_sink_server) = PriceReportV1::file_sink(
-            &settings.cache,
+            &settings.file_upload.root,
             file_upload.clone(),
             FileSinkCommitStrategy::Automatic,
             FileSinkRollTime::Duration(Duration::from_secs(PRICE_SINK_ROLL_SECS)),
@@ -91,7 +88,7 @@ impl Server {
         .await?;
 
         let mut task_manager = TaskManager::new();
-        task_manager.add(file_upload_server);
+        task_manager.add(file_upload_tasks);
         task_manager.add(price_sink_server);
         task_manager.add(PriceGenerator::new(settings, price_sink.clone()).await?);
 

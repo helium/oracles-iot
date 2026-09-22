@@ -3,10 +3,6 @@
 #
 # log = "ingest=debug,poc_store=info"
 
-# Mode to run the ingest in. This adjustst the allowed grpc endpoints. "iot", 
-# "mobile" or "chain". Required
-mode = "iot"
-
 # Token for ingest grpc endpoint bearer authentication. This is required for
 # "mobile" mode and ignored for iot.
 #
@@ -14,31 +10,16 @@ mode = "iot"
 
 # Listen address for public grpc. Default below
 #
-# listen = "0.0.0.0:9081"
-
-# Cache folder to use. Default blow
-#
-# cache = "/var/data/ingest"
+# listen_addr = "0.0.0.0:9081"
 
 # Network required by all public keys: mainnet | testnet
 #
 network = "mainnet"
 
-[output]
-# Output bucket for ingested data
-
-# Name of bucket to write details to. Required
-#
-bucket = "ingest-bucket"
-
-# Region for bucket. Defaults to below
-#
-# region = "us-west-2"
-
-# Optional URL for AWS api endpoint. Inferred from aws config settings or aws
-# IAM context by default
-#
-# endpoint = "https://aws-s3-bucket.aws.com"
+# This service has no upload settings. POC is retired (HIP-0149): beacon and
+# witness reports are validated for key/network and then discarded, so no file
+# sink and no `[file_upload]` block -- unlike the mobile ingest, which writes
+# every rolled file to the buckets under `[file_upload.buckets.<label>]`.
 
 [metrics]
 

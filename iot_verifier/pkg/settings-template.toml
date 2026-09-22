@@ -23,22 +23,56 @@
 # How often the cached gateways are refreshed from iot-config. Default 30 minutes.
 # gateway_refresh_interval = "30 minutes"
 
-# File store clients. Required.
+# File store clients (read side). Required.
 [file_store_clients]
-# Local cache location for reports staged before upload. Required.
-cache = "/var/data/iot-verified"
-
-# Bucket the verifier writes reward shares and manifests to. Required.
-[file_store_clients.output]
-bucket = "mainnet-iot-verified"
-# region = "us-west-2"
-# endpoint = "https://s3.us-west-2.amazonaws.com"
 
 # Bucket the verifier reads HPR data-transfer packet reports from. Required.
 [file_store_clients.packet_input]
 bucket = "mainnet-iot-packet-ingest"
 # region = "us-west-2"
 # endpoint = "https://s3.us-west-2.amazonaws.com"
+
+# Every bucket a rolled file is written to, keyed by a label you choose, and
+# the directory they stage under. At least one bucket is required. Two buckets
+# means the same file, byte for byte and under the same key, lands in both.
+#
+# The label is not the bucket name: the bucket name goes in the entry. Labels
+# exist so credentials can come from the environment -- bucket names are
+# hyphenated and hyphens cannot appear in an environment variable name:
+#
+#   VERIFY__FILE_UPLOAD__BUCKETS__R2__SECRET_ACCESS_KEY=<secret>
+#
+# Each entry carries its own region, endpoint and credentials and inherits
+# nothing from the others, which is what lets one bucket live on a different
+# provider than another -- a Cloudflare R2 mirror of an S3 primary. For R2 the
+# region is "auto" and the key pair is an R2 API token, not the AWS one.
+#
+# Set both access_key_id and secret_access_key or neither. With only one of
+# them the S3 client silently ignores both and falls back to the ambient AWS
+# credential chain, which cannot authenticate against R2 -- so the service
+# refuses to start rather than failing every upload later.
+#
+# A file is removed from a bucket's directory only once that bucket has stored
+# it, and each bucket retries on its own: one that is failing can neither hold
+# up nor delete another's copy, and picks up its own backlog on restart.
+
+[file_upload]
+# Directory the file sinks write into, and under which each bucket stages its
+# own <root>/<label>_<bucket>/ subdirectory. Required -- this was previously
+# `file_store_clients.cache`.
+root = "/var/data/iot-verified"
+
+[file_upload.buckets.s3]
+bucket = "mainnet-iot-verified"
+# region = "us-west-2"
+# endpoint = "https://s3.us-west-2.amazonaws.com"
+
+# [file_upload.buckets.r2]
+# bucket = "mainnet-iot-verified-mirror"
+# endpoint = "https://<account_id>.r2.cloudflarestorage.com"
+# region = "auto"
+# access_key_id = "<r2 access key id>"
+# secret_access_key = "<r2 secret access key>"
 
 [database]
 # Postgres connection string. Required.

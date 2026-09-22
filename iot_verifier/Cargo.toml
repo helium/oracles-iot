@@ -58,6 +58,7 @@ task-manager = { workspace = true }
 tls-init = { workspace = true }
 
 [dev-dependencies]
+base64 = { workspace = true }
 helium-iceberg = { workspace = true, features = ["test-harness"] }
 tempfile = { workspace = true }
 trino-rust-client = { workspace = true }

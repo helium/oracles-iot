@@ -606,7 +606,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -617,7 +617,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -644,8 +644,8 @@ dependencies = [
  "serde",
  "serde_bytes",
  "serde_json",
- "strum 0.27.2",
- "strum_macros 0.27.2",
+ "strum",
+ "strum_macros",
  "thiserror 2.0.18",
  "uuid",
  "zstd",
@@ -1732,17 +1732,17 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 [[package]]
 name = "beacon"
 version = "0.1.0"
-source = "git+https://github.com/helium/proto?branch=master#14a69e7f587d3e27483c3a186ed1b3eafd8c61fd"
+source = "git+https://github.com/helium/proto?branch=master#e01eabb3b9fc27eb27d0a080cefb8d406a5f29d7"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.21.7",
  "byteorder",
  "helium-proto 0.1.0 (git+https://github.com/helium/proto?branch=master)",
  "prost",
- "rand 0.8.5",
- "rand_chacha 0.3.1",
+ "rand 0.7.3",
+ "rand_chacha 0.2.2",
  "rust_decimal",
  "serde",
- "sha2 0.10.9",
+ "sha2 0.9.9",
  "thiserror 1.0.69",
 ]
 
@@ -2618,7 +2618,7 @@ dependencies = [
 [[package]]
 name = "custom-tracing"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#5d49ba839ebaf6b686ca2ca7d9c81a1cbc5aa8c4"
+source = "git+https://github.com/helium/oracles.git?branch=macpie%2Fingest-multi-bucket-writes-90a68c#afb44e65ed704517acc98af50e86a8d436dcf229"
 dependencies = [
  "anyhow",
  "bs58",
@@ -2725,7 +2725,7 @@ checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 [[package]]
 name = "db-store"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#5d49ba839ebaf6b686ca2ca7d9c81a1cbc5aa8c4"
+source = "git+https://github.com/helium/oracles.git?branch=macpie%2Fingest-multi-bucket-writes-90a68c#afb44e65ed704517acc98af50e86a8d436dcf229"
 dependencies = [
  "aws-config",
  "aws-credential-types",
@@ -3175,7 +3175,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3291,7 +3291,7 @@ checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 [[package]]
 name = "file-store"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#5d49ba839ebaf6b686ca2ca7d9c81a1cbc5aa8c4"
+source = "git+https://github.com/helium/oracles.git?branch=macpie%2Fingest-multi-bucket-writes-90a68c#afb44e65ed704517acc98af50e86a8d436dcf229"
 dependencies = [
  "async-compression",
  "async-trait",
@@ -3325,11 +3325,11 @@ dependencies = [
 [[package]]
 name = "file-store-oracles"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#5d49ba839ebaf6b686ca2ca7d9c81a1cbc5aa8c4"
+source = "git+https://github.com/helium/oracles.git?branch=macpie%2Fingest-multi-bucket-writes-90a68c#afb44e65ed704517acc98af50e86a8d436dcf229"
 dependencies = [
  "anyhow",
  "async-trait",
- "base64 0.22.1",
+ "base64 0.21.7",
  "beacon",
  "blake3",
  "bs58",
@@ -3345,7 +3345,7 @@ dependencies = [
  "rust_decimal",
  "serde",
  "serde_json",
- "strum 0.28.0",
+ "strum",
  "thiserror 1.0.69",
  "tokio",
  "uuid",
@@ -3959,7 +3959,7 @@ version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d292d4e2852445cbb610b515543a56b10d4a6fad90cfd6d281fe870f628573e"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.21.7",
  "bs58",
  "byteorder",
  "ed25519-compact",
@@ -3979,7 +3979,7 @@ dependencies = [
 [[package]]
 name = "helium-iceberg"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#5d49ba839ebaf6b686ca2ca7d9c81a1cbc5aa8c4"
+source = "git+https://github.com/helium/oracles.git?branch=macpie%2Fingest-multi-bucket-writes-90a68c#afb44e65ed704517acc98af50e86a8d436dcf229"
 dependencies = [
  "arrow-array",
  "arrow-ipc",
@@ -4019,7 +4019,7 @@ dependencies = [
  "angry-purple-tiger",
  "async-trait",
  "backon 1.6.0",
- "base64 0.22.1",
+ "base64 0.21.7",
  "bincode",
  "bytemuck",
  "chrono",
@@ -4058,15 +4058,15 @@ dependencies = [
 [[package]]
 name = "helium-proto"
 version = "0.1.0"
-source = "git+https://github.com/helium/proto?branch=master#14a69e7f587d3e27483c3a186ed1b3eafd8c61fd"
+source = "git+https://github.com/helium/proto?branch=master#e01eabb3b9fc27eb27d0a080cefb8d406a5f29d7"
 dependencies = [
  "bytes",
  "msg-signature 0.1.0 (git+https://github.com/helium/proto?branch=master)",
  "prost",
  "prost-build",
  "serde",
- "strum 0.27.2",
- "strum_macros 0.27.2",
+ "strum",
+ "strum_macros",
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
@@ -4082,8 +4082,8 @@ dependencies = [
  "prost",
  "prost-build",
  "serde",
- "strum 0.27.2",
- "strum_macros 0.27.2",
+ "strum",
+ "strum_macros",
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
@@ -4412,7 +4412,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "system-configuration 0.7.0",
  "tokio",
  "tower-service",
@@ -4531,7 +4531,7 @@ dependencies = [
  "serde_json",
  "serde_repr",
  "serde_with",
- "strum 0.27.2",
+ "strum",
  "tokio",
  "typed-builder",
  "typetag",
@@ -4736,7 +4736,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "backon 1.6.0",
- "base64 0.22.1",
+ "base64 0.21.7",
  "bs58",
  "chrono",
  "clap",
@@ -4822,7 +4822,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "backon 0.5.0",
- "base64 0.22.1",
+ "base64 0.21.7",
  "bs58",
  "chrono",
  "clap",
@@ -4918,7 +4918,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "base64 0.22.1",
+ "base64 0.21.7",
  "chrono",
  "clap",
  "cmake",
@@ -5051,7 +5051,7 @@ dependencies = [
  "portable-atomic",
  "portable-atomic-util",
  "serde_core",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5665,7 +5665,7 @@ dependencies = [
 [[package]]
 name = "msg-signature"
 version = "0.1.0"
-source = "git+https://github.com/helium/proto?branch=master#14a69e7f587d3e27483c3a186ed1b3eafd8c61fd"
+source = "git+https://github.com/helium/proto?branch=master#e01eabb3b9fc27eb27d0a080cefb8d406a5f29d7"
 dependencies = [
  "msg-signature-macro 0.1.0 (git+https://github.com/helium/proto?branch=master)",
 ]
@@ -5681,7 +5681,7 @@ dependencies = [
 [[package]]
 name = "msg-signature-macro"
 version = "0.1.0"
-source = "git+https://github.com/helium/proto?branch=master#14a69e7f587d3e27483c3a186ed1b3eafd8c61fd"
+source = "git+https://github.com/helium/proto?branch=master#e01eabb3b9fc27eb27d0a080cefb8d406a5f29d7"
 dependencies = [
  "quote",
  "syn 2.0.117",
@@ -6393,7 +6393,7 @@ dependencies = [
 [[package]]
 name = "poc-metrics"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#5d49ba839ebaf6b686ca2ca7d9c81a1cbc5aa8c4"
+source = "git+https://github.com/helium/oracles.git?branch=macpie%2Fingest-multi-bucket-writes-90a68c#afb44e65ed704517acc98af50e86a8d436dcf229"
 dependencies = [
  "futures",
  "metrics",
@@ -6511,7 +6511,7 @@ dependencies = [
 [[package]]
 name = "price-tracker"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#5d49ba839ebaf6b686ca2ca7d9c81a1cbc5aa8c4"
+source = "git+https://github.com/helium/oracles.git?branch=macpie%2Fingest-multi-bucket-writes-90a68c#afb44e65ed704517acc98af50e86a8d436dcf229"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6581,7 +6581,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "343d3bd7056eda839b03204e68deff7d1b13aba7af2b2fd16890697274262ee7"
 dependencies = [
  "heck 0.5.0",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "log",
  "multimap",
  "petgraph",
@@ -6602,7 +6602,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27c6023962132f4b30eb4c172c91ce92d933da334c59c23cddee82358ddafb0b"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -6720,7 +6720,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls 0.23.37",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -6760,7 +6760,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -7243,7 +7243,7 @@ dependencies = [
 [[package]]
 name = "reward-scheduler"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#5d49ba839ebaf6b686ca2ca7d9c81a1cbc5aa8c4"
+source = "git+https://github.com/helium/oracles.git?branch=macpie%2Fingest-multi-bucket-writes-90a68c#afb44e65ed704517acc98af50e86a8d436dcf229"
 dependencies = [
  "chrono",
  "thiserror 1.0.69",
@@ -7458,7 +7458,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7538,7 +7538,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -8027,13 +8027,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
 name = "solana"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#5d49ba839ebaf6b686ca2ca7d9c81a1cbc5aa8c4"
+source = "git+https://github.com/helium/oracles.git?branch=macpie%2Fingest-multi-bucket-writes-90a68c#afb44e65ed704517acc98af50e86a8d436dcf229"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -11154,16 +11154,7 @@ version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
 dependencies = [
- "strum_macros 0.27.2",
-]
-
-[[package]]
-name = "strum"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9628de9b8791db39ceda2b119bbe13134770b56c138ec1d3af810d045c04f9bd"
-dependencies = [
- "strum_macros 0.28.0",
+ "strum_macros",
 ]
 
 [[package]]
@@ -11171,18 +11162,6 @@ name = "strum_macros"
 version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"
-dependencies = [
- "heck 0.5.0",
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
-name = "strum_macros"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab85eea0270ee17587ed4156089e10b9e6880ee688791d45a905f5b1ca36f664"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -11324,7 +11303,7 @@ checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 [[package]]
 name = "task-manager"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#5d49ba839ebaf6b686ca2ca7d9c81a1cbc5aa8c4"
+source = "git+https://github.com/helium/oracles.git?branch=macpie%2Fingest-multi-bucket-writes-90a68c#afb44e65ed704517acc98af50e86a8d436dcf229"
 dependencies = [
  "futures",
  "futures-util",
@@ -11353,7 +11332,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11493,7 +11472,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 [[package]]
 name = "tls-init"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#5d49ba839ebaf6b686ca2ca7d9c81a1cbc5aa8c4"
+source = "git+https://github.com/helium/oracles.git?branch=macpie%2Fingest-multi-bucket-writes-90a68c#afb44e65ed704517acc98af50e86a8d436dcf229"
 dependencies = [
  "ctor",
  "hyper-rustls 0.27.7",
@@ -11901,7 +11880,7 @@ checksum = "593eddbc8a11f3e099e942c8c065fe376b9d1776741430888f2796682e08ab43"
 [[package]]
 name = "trino-client"
 version = "0.1.0"
-source = "git+https://github.com/helium/oracles.git?branch=main#5d49ba839ebaf6b686ca2ca7d9c81a1cbc5aa8c4"
+source = "git+https://github.com/helium/oracles.git?branch=macpie%2Fingest-multi-bucket-writes-90a68c#afb44e65ed704517acc98af50e86a8d436dcf229"
 dependencies = [
  "async-stream",
  "chrono",
@@ -12039,7 +12018,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "97fee6b57c6a41524a810daee9286c02d7752c4253064d0b05472833a438f675"
 dependencies = [
  "cfg-if",
- "rand 0.8.5",
+ "rand 0.7.3",
  "static_assertions",
 ]
 
@@ -12507,7 +12486,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

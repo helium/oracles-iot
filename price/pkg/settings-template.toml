@@ -13,11 +13,8 @@
 #
 # api_key = "..."
 
-# S3 bucket to write price reports to. Required.
-output_bucket = "price"
-
-# Folder for the local on-disk price cache / file sink staging area.
-# Default below.
+# Folder holding the last-known-good price file. Not an upload staging area --
+# that is `file_upload.root`. Default below.
 #
 # cache = "/opt/price/data"
 
@@ -42,20 +39,46 @@ interval = "60 seconds"
 # tracing_cfg_file = "tracing.cfg"
 
 
-[file_store]
-# AWS region for the output bucket. Inferred from the AWS config / IAM context
-# by default.
+# Every bucket a rolled file is written to, keyed by a label you choose, and
+# the directory they stage under. At least one bucket is required. Two buckets
+# means the same file, byte for byte and under the same key, lands in both.
 #
+# The label is not the bucket name: the bucket name goes in the entry. Labels
+# exist so credentials can come from the environment -- bucket names are
+# hyphenated and hyphens cannot appear in an environment variable name:
+#
+#   PRICE__FILE_UPLOAD__BUCKETS__R2__SECRET_ACCESS_KEY=<secret>
+#
+# Each entry carries its own region, endpoint and credentials and inherits
+# nothing from the others, which is what lets one bucket live on a different
+# provider than another -- a Cloudflare R2 mirror of an S3 primary. For R2 the
+# region is "auto" and the key pair is an R2 API token, not the AWS one.
+#
+# Set both access_key_id and secret_access_key or neither. With only one of
+# them the S3 client silently ignores both and falls back to the ambient AWS
+# credential chain, which cannot authenticate against R2 -- so the service
+# refuses to start rather than failing every upload later.
+#
+# A file is removed from a bucket's directory only once that bucket has stored
+# it, and each bucket retries on its own: one that is failing can neither hold
+# up nor delete another's copy, and picks up its own backlog on restart.
+
+[file_upload]
+# Directory the price sink writes into, and under which each bucket stages its
+# own <root>/<label>_<bucket>/ subdirectory. Required.
+root = "/opt/price/data"
+
+[file_upload.buckets.s3]
+bucket = "price"
 # region = "us-west-2"
+# endpoint = "https://s3.us-west-2.amazonaws.com"
 
-# Optional AWS S3 endpoint override. Defaults to the standard AWS endpoint.
-#
-# endpoint = "https://aws-s3-bucket.aws.com"
-
-# Static AWS credentials. Only for local testing — prefer IAM in production.
-#
-# access_key_id = "..."
-# secret_access_key = "..."
+# [file_upload.buckets.r2]
+# bucket = "price-mirror"
+# endpoint = "https://<account_id>.r2.cloudflarestorage.com"
+# region = "auto"
+# access_key_id = "<r2 access key id>"
+# secret_access_key = "<r2 secret access key>"
 
 
 [metrics]

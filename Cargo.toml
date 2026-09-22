@@ -98,18 +98,18 @@ strum = { version = "0", features = ["derive"] }
 strum_macros = "0"
 
 ### Git dependencies from oracles (mobile) repo
-file-store = { git = "https://github.com/helium/oracles.git", branch = "main" }
-file-store-oracles = { git = "https://github.com/helium/oracles.git", branch = "main" }
-db-store = { git = "https://github.com/helium/oracles.git", branch = "main" }
-task-manager = { git = "https://github.com/helium/oracles.git", branch = "main" }
-custom-tracing = { git = "https://github.com/helium/oracles.git", branch = "main" }
-poc-metrics = { git = "https://github.com/helium/oracles.git", branch = "main" }
-tls-init = { git = "https://github.com/helium/oracles.git", branch = "main" }
-price-tracker = { git = "https://github.com/helium/oracles.git", branch = "main" }
-reward-scheduler = { git = "https://github.com/helium/oracles.git", branch = "main" }
-solana = { git = "https://github.com/helium/oracles.git", branch = "main" }
-helium-iceberg = { git = "https://github.com/helium/oracles.git", branch = "main", default-features = false }
-trino-client = { git = "https://github.com/helium/oracles.git", branch = "main" }
+file-store = { git = "https://github.com/helium/oracles.git", branch = "macpie/ingest-multi-bucket-writes-90a68c" }
+file-store-oracles = { git = "https://github.com/helium/oracles.git", branch = "macpie/ingest-multi-bucket-writes-90a68c" }
+db-store = { git = "https://github.com/helium/oracles.git", branch = "macpie/ingest-multi-bucket-writes-90a68c" }
+task-manager = { git = "https://github.com/helium/oracles.git", branch = "macpie/ingest-multi-bucket-writes-90a68c" }
+custom-tracing = { git = "https://github.com/helium/oracles.git", branch = "macpie/ingest-multi-bucket-writes-90a68c" }
+poc-metrics = { git = "https://github.com/helium/oracles.git", branch = "macpie/ingest-multi-bucket-writes-90a68c" }
+tls-init = { git = "https://github.com/helium/oracles.git", branch = "macpie/ingest-multi-bucket-writes-90a68c" }
+price-tracker = { git = "https://github.com/helium/oracles.git", branch = "macpie/ingest-multi-bucket-writes-90a68c" }
+reward-scheduler = { git = "https://github.com/helium/oracles.git", branch = "macpie/ingest-multi-bucket-writes-90a68c" }
+solana = { git = "https://github.com/helium/oracles.git", branch = "macpie/ingest-multi-bucket-writes-90a68c" }
+helium-iceberg = { git = "https://github.com/helium/oracles.git", branch = "macpie/ingest-multi-bucket-writes-90a68c", default-features = false }
+trino-client = { git = "https://github.com/helium/oracles.git", branch = "macpie/ingest-multi-bucket-writes-90a68c" }
 # Needed alongside `trino-client`: its re-exported `Trino` derive macro expands to
 # absolute `::trino_rust_client::...` paths, so the crate must be a direct dependency.
 # Must stay on the same major as the version `trino-client` itself uses (see the

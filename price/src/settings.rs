@@ -24,10 +24,11 @@ pub struct Settings {
     /// this via the `PRICE__API_KEY` environment variable.
     #[serde(skip_serializing)]
     pub api_key: String,
-    #[serde(default)]
-    pub file_store: file_store::Settings,
-    pub output_bucket: String,
-    /// Folder for local cache of ingest data
+    /// Every bucket price reports are written to, and the directory they
+    /// stage under. Replaces `file_store` + `output_bucket`.
+    pub file_upload: file_store::file_upload::Settings,
+    /// Folder holding the last-known-good price file. Kept separate from
+    /// `file_upload.root`: it is not an upload, and nothing stages under it.
     #[serde(default = "default_cache")]
     pub cache: PathBuf,
     /// Metrics settings
@@ -103,7 +104,14 @@ mod tests {
     fn test_default_price_override() -> anyhow::Result<()> {
         let settings = temp_env::with_vars(
             [
-                ("PRICE__OUTPUT_BUCKET", Some("test-bucket".to_string())),
+                (
+                    "PRICE__FILE_UPLOAD__BUCKETS__S3__BUCKET",
+                    Some("test-bucket".to_string()),
+                ),
+                (
+                    "PRICE__FILE_UPLOAD__ROOT",
+                    Some("/opt/price/data".to_string()),
+                ),
                 ("PRICE__DEFAULT_PRICE", Some("100000000".to_string())),
                 ("PRICE__API_KEY", Some("test-key".to_string())),
             ],
@@ -111,14 +119,14 @@ mod tests {
         )?;
 
         assert_eq!(settings.default_price, Some(100_000_000));
-        assert_eq!(settings.output_bucket, "test-bucket");
+        assert_eq!(settings.file_upload.buckets["s3"].bucket, "test-bucket");
         Ok(())
     }
 
     #[test]
     fn test_settings_template_parses() -> anyhow::Result<()> {
         let template = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pkg/settings-template.toml");
-        // The template intentionally leaves output_bucket populated. `api_key`
+        // The template intentionally ships `[file_upload]` populated. `api_key`
         // is required and ships commented out (set via env in production), so it
         // must be supplied here for the parse to succeed.
         let settings =
@@ -127,7 +135,8 @@ mod tests {
             })?;
 
         assert!(settings.source.contains("pyth.dourolabs.app/hermes"));
-        assert_eq!(settings.output_bucket, "price");
+        assert_eq!(settings.file_upload.buckets["s3"].bucket, "price");
+        settings.file_upload.validate()?;
         assert_eq!(settings.interval, Duration::from_secs(60));
         Ok(())
     }
@@ -137,7 +146,14 @@ mod tests {
         let url = "https://example.test/v2/updates/price/latest?ids[]=abc";
         let settings = temp_env::with_vars(
             [
-                ("PRICE__OUTPUT_BUCKET", Some("test-bucket".to_string())),
+                (
+                    "PRICE__FILE_UPLOAD__BUCKETS__S3__BUCKET",
+                    Some("test-bucket".to_string()),
+                ),
+                (
+                    "PRICE__FILE_UPLOAD__ROOT",
+                    Some("/opt/price/data".to_string()),
+                ),
                 ("PRICE__SOURCE", Some(url.to_string())),
                 ("PRICE__API_KEY", Some("test-key".to_string())),
             ],
