@@ -15,7 +15,7 @@ impl Daemon {
     pub async fn run(&self, settings: &Settings) -> anyhow::Result<()> {
         custom_tracing::init(settings.log.clone(), settings.custom_tracing.clone()).await?;
 
-        tracing::info!("Starting IoT Config Daemon with {:?}", settings);
+        tracing::info!("Settings: {}", serde_json::to_string_pretty(settings)?);
 
         // Install prometheus metrics exporter
         poc_metrics::start_metrics(&settings.metrics)?;
@@ -25,8 +25,11 @@ impl Daemon {
         let pool = settings.database.connect("iot-config-store").await?;
         sqlx::migrate!().run(&pool).await?;
 
-        // Create on-chain metadata pool
-        let metadata_pool = settings.metadata.connect("iot-config-metadata").await?;
+        // Trino client for on-chain data: the hotspot inventory (Iceberg) and the
+        // sub-DAO epoch infos (indexer Postgres). `from_settings` is synchronous and
+        // self-managing — it starts its own JWT file watcher when configured — so it
+        // is not registered with the TaskManager.
+        let trino_client = trino_client::Client::from_settings(&settings.trino)?;
 
         let (auth_updater, auth_cache) = AuthCache::new(settings.admin_pubkey()?, &pool).await?;
         let (region_updater, region_map) = RegionMapReader::new(&pool).await?;
@@ -62,7 +65,7 @@ impl Daemon {
             region_updater,
         )?;
 
-        let subdao_svc = SubDaoService::new(settings, auth_cache, metadata_pool.clone())?;
+        let subdao_svc = SubDaoService::new(settings, auth_cache, trino_client.clone())?;
 
         let listen_addr = settings.listen;
         let pubkey = settings.signing_keypair().public_key().to_string();
@@ -71,7 +74,7 @@ impl Daemon {
 
         let tracker = Tracker::new(
             pool.clone(),
-            metadata_pool.clone(),
+            trino_client,
             settings.gateway_tracker_interval,
         );
 

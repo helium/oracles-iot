@@ -381,7 +381,7 @@ async fn insert_gateway(
         location: Some(h3_index),
         location_asserts: Some(1),
         location_changed_at: Some(now),
-        refreshed_at: Some(now),
+        refreshed_at: now,
         updated_at: now,
     };
 

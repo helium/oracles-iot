@@ -10,13 +10,13 @@ use helium_proto::services::sub_dao::{
 };
 use helium_proto::Message;
 use helium_proto_crypto::MsgVerify;
-use sqlx::{Pool, Postgres};
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
 pub struct SubDaoService {
     auth_cache: AuthCache,
-    metadata_pool: Pool<Postgres>,
+    trino: trino_client::Client,
+    solana_schema: String,
     signing_key: Arc<Keypair>,
 }
 
@@ -24,11 +24,12 @@ impl SubDaoService {
     pub fn new(
         settings: &Settings,
         auth_cache: AuthCache,
-        metadata_pool: Pool<Postgres>,
+        trino: trino_client::Client,
     ) -> Result<Self> {
         Ok(Self {
             auth_cache,
-            metadata_pool,
+            trino,
+            solana_schema: sub_dao_epoch_reward_info::trino::SOLANA_SCHEMA.to_string(),
             signing_key: settings.signing_keypair(),
         })
     }
@@ -76,28 +77,33 @@ impl sub_dao::sub_dao_server::SubDao for SubDaoService {
         let sub_dao = request.sub_dao_address;
         tracing::info!(sub_dao = %sub_dao, epoch = epoch, "fetching sub_dao epoch reward info");
 
-        sub_dao_epoch_reward_info::db::get_info(&self.metadata_pool, epoch, &sub_dao)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "error fetching sub_dao epoch reward info");
-                Status::internal("error fetching sub_dao epoch reward info")
-            })?
-            .map_or_else(
-                || {
-                    telemetry::count_epoch_chain_lookup("not-found");
-                    Err(Status::not_found(epoch.to_string()))
-                },
-                |info| {
-                    let info = info.into();
-                    let mut res = SubDaoEpochRewardInfoResV1 {
-                        info: Some(info),
-                        timestamp: Utc::now().encode_timestamp(),
-                        signer: self.signing_key.public_key().into(),
-                        signature: vec![],
-                    };
-                    res.signature = self.sign_response(&res.encode_to_vec())?;
-                    Ok(Response::new(res))
-                },
-            )
+        sub_dao_epoch_reward_info::trino::get_info(
+            &self.trino,
+            &self.solana_schema,
+            epoch,
+            &sub_dao,
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "error fetching sub_dao epoch reward info");
+            Status::internal("error fetching sub_dao epoch reward info")
+        })?
+        .map_or_else(
+            || {
+                telemetry::count_epoch_chain_lookup("not-found");
+                Err(Status::not_found(epoch.to_string()))
+            },
+            |info| {
+                let info = info.into();
+                let mut res = SubDaoEpochRewardInfoResV1 {
+                    info: Some(info),
+                    timestamp: Utc::now().encode_timestamp(),
+                    signer: self.signing_key.public_key().into(),
+                    signature: vec![],
+                };
+                res.signature = self.sign_response(&res.encode_to_vec())?;
+                Ok(Response::new(res))
+            },
+        )
     }
 }

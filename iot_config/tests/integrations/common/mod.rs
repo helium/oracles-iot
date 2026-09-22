@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tonic::transport;
 
-pub mod gateway_metadata_db;
+pub mod chain_trino;
 pub mod partial_migrator;
 
 pub fn make_keypair() -> Keypair {

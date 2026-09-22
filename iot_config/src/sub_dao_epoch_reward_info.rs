@@ -62,72 +62,123 @@ impl TryFrom<SubDaoEpochRewardInfoProto> for EpochRewardInfo {
     }
 }
 
-pub(crate) mod db {
+/// Reads the sub-DAO epoch reward info from the Solana on-chain indexer via Trino,
+/// replacing a direct Postgres connection to the same database.
+pub mod trino {
     use crate::sub_dao_epoch_reward_info::RawSubDaoEpochRewardInfo;
+    use anyhow::Context;
     use chrono::{DateTime, Utc};
-    use file_store::traits::TimestampDecode;
-    use sqlx::postgres::PgRow;
-    use sqlx::{FromRow, PgExecutor, Row};
+    use trino_client::TrinoFromRow;
 
-    const GET_EPOCH_REWARD_INFO_SQL: &str = r#"
-            SELECT
-                address AS epoch_address,
-                sub_dao AS sub_dao_address,
-                epoch::BIGINT,
-                hnt_rewards_issued::BIGINT,
-                delegation_rewards_issued::BIGINT,
-                rewards_issued_at::BIGINT
-            FROM sub_dao_epoch_infos
-            WHERE epoch = $1 AND sub_dao = $2
-        "#;
+    /// Catalog + schema holding the Solana on-chain indexer tables in production.
+    /// The `solana` catalog is a Trino PostgreSQL connector over the indexer DB.
+    /// Exposed so integration tests can point the query at seeded fixtures in
+    /// another catalog.
+    pub const SOLANA_SCHEMA: &str = "solana.public";
 
+    /// One `sub_dao_epoch_infos` row. The indexer's numeric columns do not surface
+    /// as native bigints through this catalog, so the query `CAST`s every one to
+    /// varchar and they are parsed here. Field names match the `SELECT ... AS`
+    /// aliases.
+    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, TrinoFromRow)]
+    struct EpochRow {
+        epoch_address: String,
+        hnt_rewards_issued: String,
+        delegation_rewards_issued: String,
+        rewards_issued_at: String,
+    }
+
+    /// The epoch's reward info, or `None` when the chain hasn't issued for it yet —
+    /// either the row isn't indexed, or it is present with both reward fields still
+    /// zero. The caller waits and retries.
     pub async fn get_info(
-        db: impl PgExecutor<'_>,
+        client: &trino_client::Client,
+        schema: &str,
         epoch: u64,
         sub_dao: &str,
     ) -> anyhow::Result<Option<RawSubDaoEpochRewardInfo>> {
-        let mut query: sqlx::QueryBuilder<sqlx::Postgres> =
-            sqlx::QueryBuilder::new(GET_EPOCH_REWARD_INFO_SQL);
-        let res = query
-            .build_query_as::<RawSubDaoEpochRewardInfo>()
-            .bind(epoch as i64)
-            .bind(sub_dao)
-            .fetch_optional(db)
-            .await;
-        tracing::info!("get_info: {:?}", res);
-        Ok(res?)
+        let Some(row) = client
+            .get_all(epoch_statement(schema, epoch, sub_dao))
+            .await?
+            .into_iter()
+            .next()
+        else {
+            return Ok(None);
+        };
+
+        let hnt_rewards_issued: u64 = row
+            .hnt_rewards_issued
+            .parse()
+            .context("parsing sub_dao_epoch_infos.hnt_rewards_issued")?;
+        let delegation_rewards_issued: u64 = row
+            .delegation_rewards_issued
+            .parse()
+            .context("parsing sub_dao_epoch_infos.delegation_rewards_issued")?;
+
+        // Both zero => the epoch hasn't been closed / had rewards issued yet.
+        if hnt_rewards_issued == 0 && delegation_rewards_issued == 0 {
+            return Ok(None);
+        }
+
+        let rewards_issued_at_secs: i64 = row
+            .rewards_issued_at
+            .parse()
+            .context("parsing sub_dao_epoch_infos.rewards_issued_at")?;
+        let rewards_issued_at = DateTime::<Utc>::from_timestamp(rewards_issued_at_secs, 0)
+            .context("sub_dao_epoch_infos.rewards_issued_at out of range")?;
+
+        Ok(Some(RawSubDaoEpochRewardInfo {
+            epoch,
+            epoch_address: row.epoch_address,
+            sub_dao_address: sub_dao.to_string(),
+            hnt_rewards_issued,
+            delegation_rewards_issued,
+            rewards_issued_at,
+        }))
     }
 
-    impl FromRow<'_, PgRow> for RawSubDaoEpochRewardInfo {
-        fn from_row(row: &PgRow) -> sqlx::Result<Self> {
-            let rewards_issued_at: DateTime<Utc> = (row.try_get::<i64, &str>("rewards_issued_at")?
-                as u64)
-                .to_timestamp()
-                .map_err(|err| sqlx::Error::Decode(Box::new(err)))?;
+    /// `epoch` is a varchar column, so it is bound as its decimal string. Qualifying
+    /// the table with `schema` (catalog.schema) makes the reference independent of
+    /// the client's default catalog.
+    fn epoch_statement(
+        schema: &str,
+        epoch: u64,
+        sub_dao: &str,
+    ) -> trino_client::TypedStatement<EpochRow> {
+        trino_client::Statement::new(format!(
+            "
+            SELECT
+                address                                    AS epoch_address,
+                CAST(hnt_rewards_issued AS VARCHAR)        AS hnt_rewards_issued,
+                CAST(delegation_rewards_issued AS VARCHAR) AS delegation_rewards_issued,
+                CAST(rewards_issued_at AS VARCHAR)         AS rewards_issued_at
+            FROM {schema}.sub_dao_epoch_infos
+            WHERE epoch = :epoch AND sub_dao = :sub_dao
+            "
+        ))
+        .bind("epoch", epoch.to_string())
+        .bind("sub_dao", sub_dao.to_string())
+        .typed::<EpochRow>()
+    }
 
-            let hnt_rewards_issued = row.get::<i64, &str>("hnt_rewards_issued") as u64;
-            if hnt_rewards_issued == 0 {
-                return Err(sqlx::Error::Decode(Box::new(sqlx::Error::Decode(
-                    Box::from("hnt_rewards_issued is 0"),
-                ))));
-            };
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use trino_client::SqlStatement;
 
-            let delegation_rewards_issued =
-                row.get::<i64, &str>("delegation_rewards_issued") as u64;
-            if delegation_rewards_issued == 0 {
-                return Err(sqlx::Error::Decode(Box::new(sqlx::Error::Decode(
-                    Box::from("delegation_rewards_issued is 0"),
-                ))));
-            };
-
-            Ok(Self {
-                epoch: row.try_get::<i64, &str>("epoch")? as u64,
-                epoch_address: row.try_get::<String, &str>("epoch_address")?,
-                sub_dao_address: row.try_get::<String, &str>("sub_dao_address")?,
-                hnt_rewards_issued,
-                delegation_rewards_issued,
-                rewards_issued_at,
-            })
+        #[test]
+        fn statement_targets_the_solana_table_and_binds_both_keys() {
+            let rendered = epoch_statement(SOLANA_SCHEMA, 20654, "39Lw1RH6zt8")
+                .to_statement()
+                .render()
+                .unwrap();
+            assert!(
+                rendered.contains("solana.public.sub_dao_epoch_infos"),
+                "{rendered}"
+            );
+            // Bound params render as positional placeholders (EXECUTE IMMEDIATE).
+            assert!(rendered.contains("epoch = ?"), "{rendered}");
+            assert!(rendered.contains("sub_dao = ?"), "{rendered}");
         }
     }
 }

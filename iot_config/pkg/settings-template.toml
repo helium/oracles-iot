@@ -16,24 +16,45 @@ url = "postgres://postgres:postgres@127.0.0.1:5432/config_db"
 
 max_connections = 20
 
-[metadata]
+# How often the gateway tracker refreshes the local `gateways` table from the
+# on-chain inventory. Default below.
+#
+# gateway_tracker_interval = "1 hour"
 
-# Url for the solana on-chain data such as hotspot asserted hexes
-host = "helius.aws"
-port = 5432
-username = "helius"
-database = "db"
+# Trino query client. REQUIRED. Replaces the old [metadata] Postgres connection to
+# the Solana on-chain indexer. Two things read it:
+#   - the gateway tracker, from network.chain.iot_hotspot_inventory (Iceberg)
+#   - the sub-DAO service, from solana.public.sub_dao_epoch_infos (a PostgreSQL
+#     connector over the on-chain indexer DB)
+# The cluster must expose both the `network` and `solana` catalogs.
 
-auth_type = "iam"
-# IAM Role to assume to generate db auth token
+[trino]
+host = "trino.example.com"
+port = 443
+user = "iot-config"
 
-iam_role_arn = "arn::iam"
-iam_role_session_name = "role-session-name"
-iam_duration_seconds = 900
-iam_region = "us-west-2"
+# Default catalog/schema for two-part `namespace.table` names. Both queries above
+# use fully-qualified names and resolve regardless of these.
+#
+# catalog = "network"
+# schema = "chain"
 
-# Max connections to database
-max_connections = 20
+# Use HTTPS (default false); skip TLS verification for local dev (default false).
+#
+# secure = true
+# insecure_skip_tls_verify = false
+
+# [trino.auth]
+# type = "jwt_file"                    # token read from a file, refreshed periodically
+# path = "/var/run/secrets/trino.jwt"
+# refresh_interval = "60s"
+#
+# type = "jwt"                         # static token
+# token = "ey..."
+#
+# type = "basic"
+# username = "iot-config"
+# password = "..."
 
 [metrics]
 

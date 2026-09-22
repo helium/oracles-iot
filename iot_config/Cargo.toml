@@ -51,9 +51,12 @@ file-store = { workspace = true }
 file-store-oracles = { workspace = true }
 poc-metrics = { workspace = true }
 task-manager = { workspace = true }
+trino-client = { workspace = true }
+trino-rust-client = { workspace = true }
 
 [dev-dependencies]
 backon = { version = "0", features = ["tokio-sleep"] }
 h3o = { workspace = true }
+helium-iceberg = { workspace = true, features = ["test-harness"] }
 rand = { workspace = true }
 tempfile = "3"

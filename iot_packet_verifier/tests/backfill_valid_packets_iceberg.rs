@@ -144,11 +144,7 @@ async fn get_all_or_empty<T>(
 where
     T: trino_rust_client::Trino + serde::Serialize + for<'de> serde::Deserialize<'de> + 'static,
 {
-    match trino.get_all::<T>(sql).await {
-        Ok(rows) => Ok(rows.into_vec()),
-        Err(trino_rust_client::error::Error::EmptyData) => Ok(vec![]),
-        Err(e) => Err(e.into()),
-    }
+    Ok(trino.get_all::<T>(sql).await?.into_vec())
 }
 
 async fn setup_iceberg() -> anyhow::Result<IcebergTestHarness> {
