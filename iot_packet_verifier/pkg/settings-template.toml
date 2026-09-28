@@ -3,7 +3,8 @@
 # 
 # log = "iot_packet_verifier=debug"
 
-# Cache location for generated verified reports; Required
+# Local scratch directory. Roots the iceberg backfill spool; the file sinks
+# and their uploaders live under `file_upload.root` instead. Required.
 cache = "/var/data/verified-reports"
 
 # URL for the config server
@@ -67,21 +68,47 @@ region = "us-west-1"
 #
 # endpoint = "https://aws-s3-bucket.aws.com"
 
-[output]
-# Output bucket for verified reports
-
-# Name of bucket to write details to. Required
+# Every bucket a rolled file is written to, keyed by a label you choose, and
+# the directory they stage under. At least one bucket is required. Two buckets
+# means the same file, byte for byte and under the same key, lands in both.
 #
-bucket = "todo"
-
-# Region for bucket. Defaults to below
+# The label is not the bucket name: the bucket name goes in the entry. Labels
+# exist so credentials can come from the environment -- bucket names are
+# hyphenated and hyphens cannot appear in an environment variable name:
 #
+#   PACKET_VERIFY__FILE_UPLOAD__BUCKETS__R2__SECRET_ACCESS_KEY=<secret>
+#
+# Each entry carries its own region, endpoint and credentials and inherits
+# nothing from the others, which is what lets one bucket live on a different
+# provider than another -- a Cloudflare R2 mirror of an S3 primary. For R2 the
+# region is "auto" and the key pair is an R2 API token, not the AWS one.
+#
+# Set both access_key_id and secret_access_key or neither. With only one of
+# them the S3 client silently ignores both and falls back to the ambient AWS
+# credential chain, which cannot authenticate against R2 -- so the service
+# refuses to start rather than failing every upload later.
+#
+# A file is removed from a bucket's directory only once that bucket has stored
+# it, and each bucket retries on its own: one that is failing can neither hold
+# up nor delete another's copy, and picks up its own backlog on restart.
+
+[file_upload]
+# Directory the file sinks write into, and under which each bucket stages its
+# own <root>/<label>_<bucket>/ subdirectory. Required -- verified packets used
+# to stage under `cache`.
+root = "/var/data/verified-reports"
+
+[file_upload.buckets.s3]
+bucket = "mainnet-iot-packet-verifier"
 # region = "us-west-2"
+# endpoint = "https://s3.us-west-2.amazonaws.com"
 
-# Optional URL for AWS api endpoint. Inferred from aws config settings or aws
-# IAM context by default
-#
-# endpoint = "https://aws-s3-bucket.aws.com"
+# [file_upload.buckets.r2]
+# bucket = "mainnet-iot-packet-verifier-mirror"
+# endpoint = "https://<account_id>.r2.cloudflarestorage.com"
+# region = "auto"
+# access_key_id = "<r2 access key id>"
+# secret_access_key = "<r2 secret access key>"
 
 [metrics]
 

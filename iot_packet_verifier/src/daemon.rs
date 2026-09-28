@@ -7,9 +7,7 @@ use crate::{
     verifier::{CachedOrgClient, ConfigServer, Debiter, Verifier},
 };
 use anyhow::{bail, Result};
-use file_store::{
-    file_info_poller::FileInfoStream, file_sink::FileSinkClient, file_source, file_upload,
-};
+use file_store::{file_info_poller::FileInfoStream, file_sink::FileSinkClient, file_source};
 use file_store_oracles::{
     iot_packet::PacketRouterPacketReport,
     traits::{FileSinkCommitStrategy, FileSinkRollTime, FileSinkWriteExt},
@@ -173,11 +171,13 @@ impl Cmd {
         );
 
         let file_store_client = settings.file_store.connect().await;
-        let (file_upload, file_upload_server) =
-            file_upload::FileUpload::new(file_store_client.clone(), settings.output_bucket.clone())
-                .await;
 
-        let store_base_path = std::path::Path::new(&settings.cache);
+        // One task however many buckets are configured. Registered before the
+        // sinks below so LIFO shutdown stops the uploaders after them: a sink's
+        // last files are handed over before its uploader goes.
+        let (file_upload, file_upload_tasks) = settings.file_upload.connect().await?;
+
+        let store_base_path = settings.file_upload.root.as_path();
 
         // Verified packets:
         let (valid_packets, valid_packets_server) = ValidPacket::file_sink(
@@ -236,7 +236,7 @@ impl Cmd {
         let monitor_funds_period = settings.monitor_funds_period;
 
         TaskManager::builder()
-            .add_task(file_upload_server)
+            .add_task(file_upload_tasks)
             .add_task(valid_packets_server)
             .add_task(invalid_packets_server)
             .add_task(move |shutdown| {

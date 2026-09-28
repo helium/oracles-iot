@@ -4,7 +4,7 @@ use crate::{
 };
 
 use anyhow::Result;
-use file_store::{file_source, file_upload};
+use file_store::file_source;
 use file_store_oracles::{
     traits::{FileSinkCommitStrategy, FileSinkRollTime, FileSinkWriteExt},
     FileType,
@@ -34,12 +34,12 @@ impl Cmd {
 
         telemetry::initialize(&pool).await?;
 
-        let (file_upload, file_upload_server) = file_upload::FileUpload::from_bucket_client(
-            settings.file_store_clients.output.connect().await,
-        )
-        .await;
+        // One task however many buckets are configured. Registered before the
+        // sinks below so LIFO shutdown stops the uploaders after them: a sink's
+        // last files are handed over before its uploader goes.
+        let (file_upload, file_upload_tasks) = settings.file_upload.connect().await?;
 
-        let store_base_path = &settings.file_store_clients.cache;
+        let store_base_path = &settings.file_upload.root;
 
         let iot_config_client = IotConfigClient::from_settings(&settings.iot_config_client)?;
         let sub_dao_rewards_client = SubDaoClient::from_settings(&settings.iot_config_client)?;
@@ -129,7 +129,7 @@ impl Cmd {
         );
 
         TaskManager::builder()
-            .add_task(file_upload_server)
+            .add_task(file_upload_tasks)
             .add_task(gateway_rewards_sink_server)
             .add_task(reward_manifests_sink_server)
             .add_task(non_rewardable_packet_sink_server)

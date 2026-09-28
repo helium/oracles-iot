@@ -2,7 +2,7 @@ use config::{Config, Environment, File};
 use helium_crypto::Network;
 use humantime_serde::re::humantime;
 use serde::{Deserialize, Serialize};
-use std::{net::SocketAddr, path::Path, path::PathBuf, time::Duration};
+use std::{net::SocketAddr, path::Path, time::Duration};
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Settings {
@@ -15,9 +15,6 @@ pub struct Settings {
     /// Listen address. Required. Default is 0.0.0.0:9081
     #[serde(default = "default_listen_addr")]
     pub listen_addr: SocketAddr,
-    /// Local folder for storing intermediate files
-    #[serde(default = "default_cache")]
-    pub cache: PathBuf,
     /// Network required in all public keys:  mainnet | testnet
     #[serde(default = "default_network", skip_serializing)]
     pub network: Network,
@@ -30,17 +27,11 @@ pub struct Settings {
     /// Timeout of session key session in seconds
     #[serde(with = "humantime_serde", default = "default_session_key_timeout")]
     pub session_key_timeout: Duration,
-    #[serde(default)]
-    pub file_store: file_store::Settings,
-    pub output_bucket: String,
-    /// Timeout of session key session in seconds
-    #[serde(with = "humantime_serde", default = "default_roll_time")]
-    pub roll_time: Duration,
     /// API token required as part of a Bearer authentication GRPC request
     /// header. Used only by the mobile mode currently
     #[serde(skip_serializing)]
     pub token: Option<String>,
-    /// Target output bucket details Metrics settings
+    /// Metrics settings
     #[serde(default)]
     pub metrics: poc_metrics::Settings,
     // mobile config client settings
@@ -52,14 +43,6 @@ pub struct Settings {
 
 fn default_network() -> Network {
     Network::MainNet
-}
-
-fn default_cache() -> PathBuf {
-    PathBuf::from("/opt/ingest/data")
-}
-
-fn default_roll_time() -> Duration {
-    humantime::parse_duration("15 minutes").unwrap()
 }
 
 fn default_session_key_timeout() -> Duration {

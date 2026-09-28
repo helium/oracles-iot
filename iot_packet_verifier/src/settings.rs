@@ -2,7 +2,10 @@ use chrono::{DateTime, Utc};
 use config::{Config, ConfigError, Environment, File};
 use humantime_serde::re::humantime;
 use serde::Deserialize;
-use std::{path::Path, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 #[derive(Debug, Deserialize)]
 pub struct Settings {
@@ -12,16 +15,22 @@ pub struct Settings {
     pub log: String,
     #[serde(default)]
     pub custom_tracing: custom_tracing::Settings,
-    /// Cache location for generated verified reports
-    pub cache: String,
+    /// Local scratch directory. Roots the iceberg backfill spool; the file
+    /// sinks and their uploaders live under `file_upload.root` instead.
+    pub cache: PathBuf,
     /// Data credit burn period in minutes. Default is 1.
     #[serde(with = "humantime_serde", default = "default_burn_period")]
     pub burn_period: Duration,
     pub database: db_store::Settings,
+    /// Connection settings for `ingest_bucket`, which this service only reads
+    /// from. Upload buckets carry their own connection settings in
+    /// `file_upload.buckets.<label>`.
     #[serde(default)]
     pub file_store: file_store::Settings,
     pub ingest_bucket: String,
-    pub output_bucket: String,
+    /// Every bucket verified packets are written to, and the directory they
+    /// stage under. Replaces `output_bucket`.
+    pub file_upload: file_store::file_upload::Settings,
     pub iot_config_client: iot_config::client::Settings,
     pub metrics: poc_metrics::Settings,
     #[serde(default)]

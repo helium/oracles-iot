@@ -1,19 +1,10 @@
 use config::{Config, Environment, File};
 use humantime_serde::re::humantime;
 use serde::{Deserialize, Serialize};
-use std::{
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{path::Path, time::Duration};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct FileStoreClients {
-    /// Cache location for generated verified reports
-    pub cache: PathBuf,
-
-    /// Where does verifier write all it's output
-    pub output: file_store::BucketSettings,
-
     /// HPR packet report bucket
     pub packet_input: file_store::BucketSettings,
 }
@@ -28,6 +19,11 @@ pub struct Settings {
     pub custom_tracing: custom_tracing::Settings,
 
     pub file_store_clients: FileStoreClients,
+
+    /// Every bucket the verifier writes reward shares and manifests to, and
+    /// the directory they stage under. Replaces `file_store_clients.cache`
+    /// and `file_store_clients.output`.
+    pub file_upload: file_store::file_upload::Settings,
 
     pub database: db_store::Settings,
     pub iot_config_client: iot_config::client::Settings,
@@ -121,6 +117,7 @@ impl Settings {
             "log": self.log,
             "custom_tracing": self.custom_tracing,
             "file_store_clients": self.file_store_clients,
+            "file_upload": self.file_upload,
             "database": self.database,
             "iot_config_client": {
                 "url": self.iot_config_client.url.to_string(),
@@ -138,5 +135,110 @@ impl Settings {
             "gateway_refresh_interval": format_duration(self.gateway_refresh_interval),
         }))
         .expect("printing settings")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::Engine;
+    use helium_crypto::{KeyTag, Keypair};
+    use std::io::Write;
+
+    const R2_KEY_ID: &str = "AKIAsupersecretkeyid";
+    const R2_SECRET: &str = "r2-secret-access-key-value";
+    const DB_PASSWORD: &str = "hunter2";
+
+    /// `as_json_pretty` is how the server logs its configuration at boot, so an
+    /// upload bucket's credentials must not survive the round trip.
+    ///
+    /// Worth pinning rather than trusting by inspection: `BucketSettings` carries
+    /// its credentials in a `#[serde(flatten)]`ed inner struct, so the
+    /// `skip_serializing` that redacts them sits one level below the field this
+    /// settings struct names. The R2 mirror's key pair belongs in the
+    /// environment, which is exactly the case where a leak would land in the logs.
+    #[test]
+    fn serialized_settings_carry_no_upload_credentials() {
+        let keypair = Keypair::generate(KeyTag::default(), &mut rand::rngs::OsRng);
+        let encoded = base64::engine::general_purpose::STANDARD.encode(keypair.to_vec());
+
+        let mut file = tempfile::Builder::new()
+            .suffix(".toml")
+            .tempfile()
+            .expect("temp settings file");
+        write!(
+            file,
+            r#"
+            [file_store_clients.packet_input]
+            bucket = "mainnet-iot-packet-ingest"
+
+            [file_upload]
+            root = "/var/data/iot-verified"
+
+            [file_upload.buckets.s3]
+            bucket = "mainnet-iot-verified"
+            region = "us-west-2"
+
+            [file_upload.buckets.r2]
+            bucket = "mainnet-iot-verified-mirror"
+            endpoint = "https://account.r2.cloudflarestorage.com"
+            region = "auto"
+            access_key_id = "{R2_KEY_ID}"
+            secret_access_key = "{R2_SECRET}"
+
+            [database]
+            url = "postgres://postgres:{DB_PASSWORD}@127.0.0.1:5432/iot_verifier"
+
+            [iot_config_client]
+            url = "http://127.0.0.1:8080"
+            signing_keypair = "{encoded}"
+            config_pubkey = "137oJzq1qZpSbzHawaysTGGsRCYTXG1MiTMQNxYSsQJp4YMDdN8"
+
+            [price_tracker]
+            price_duration_minutes = 60
+
+            [price_tracker.bucket]
+            bucket = "mainnet-price"
+
+            [metrics]
+            endpoint = "127.0.0.1:19001"
+            "#
+        )
+        .expect("write settings");
+
+        let settings = Settings::new(Some(file.path())).expect("load settings");
+
+        // Sanity first: the secrets really are in the loaded struct. Without this a
+        // fixture that silently failed to set them would make the assertions below
+        // pass while proving nothing.
+        let r2 = &settings.file_upload.buckets["r2"];
+        assert_eq!(r2.settings.access_key_id.as_deref(), Some(R2_KEY_ID));
+        assert_eq!(r2.settings.secret_access_key.as_deref(), Some(R2_SECRET));
+        assert!(
+            settings
+                .database
+                .url
+                .as_deref()
+                .is_some_and(|url| url.contains(DB_PASSWORD)),
+            "fixture did not load the database password"
+        );
+
+        let json = settings.as_json_pretty();
+
+        assert!(
+            !json.contains(R2_KEY_ID),
+            "r2 access key id leaked into settings log:\n{json}"
+        );
+        assert!(
+            !json.contains(R2_SECRET),
+            "r2 secret access key leaked into settings log:\n{json}"
+        );
+        assert!(
+            !json.contains(DB_PASSWORD),
+            "database password leaked into settings log:\n{json}"
+        );
+        // ...while the non-secret configuration is still there to be useful.
+        assert!(json.contains("mainnet-iot-verified-mirror"), "{json}");
+        assert!(json.contains("/var/data/iot-verified"), "{json}");
     }
 }
