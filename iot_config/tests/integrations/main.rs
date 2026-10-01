@@ -6,3 +6,4 @@ mod gateway_tracker;
 mod migrations;
 mod route_service;
 mod sub_dao_epoch_reward_info;
+mod sub_dao_epoch_reward_info_postgres;

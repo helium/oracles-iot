@@ -86,7 +86,8 @@ pub fn inventory_table() -> anyhow::Result<TableDefinition> {
 // ── sub_dao_epoch_infos ──────────────────────────────────────────────────────
 
 /// The indexer's numeric columns do not surface as native bigints through the
-/// `solana` catalog, so every field is a string — exactly what the resolver parses.
+/// `solana` catalog (varchar on Trino <= 479), so every field is a string. The
+/// real Postgres column types are covered by `sub_dao_epoch_reward_info_postgres`.
 #[derive(Serialize)]
 pub struct SubDaoEpochInfo {
     pub epoch: String,

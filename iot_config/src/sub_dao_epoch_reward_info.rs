@@ -77,9 +77,9 @@ pub mod trino {
     pub const SOLANA_SCHEMA: &str = "solana.public";
 
     /// One `sub_dao_epoch_infos` row. The indexer's numeric columns do not surface
-    /// as native bigints through this catalog, so the query `CAST`s every one to
-    /// varchar and they are parsed here. Field names match the `SELECT ... AS`
-    /// aliases.
+    /// as native bigints through this catalog, so the query renders every one as
+    /// a plain-digit varchar (see [`epoch_statement`]) and they are parsed here.
+    /// Field names match the `SELECT ... AS` aliases.
     #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, TrinoFromRow)]
     struct EpochRow {
         epoch_address: String,
@@ -137,9 +137,15 @@ pub mod trino {
         }))
     }
 
-    /// `epoch` is a varchar column, so it is bound as its decimal string. Qualifying
-    /// the table with `schema` (catalog.schema) makes the reference independent of
-    /// the client's default catalog.
+    /// The indexer's columns are Postgres `numeric` with no precision. How Trino
+    /// exposes them depends on the version: varchar (<= 479, with
+    /// `unsupported-type-handling = CONVERT_TO_VARCHAR`) or the `number` type
+    /// (>= 480). `CAST(number AS VARCHAR)` renders trailing zeros in exponent form
+    /// (`1784592000` -> `1.784592E+9`), so each column goes through
+    /// `DECIMAL(38, 0)` first, which yields plain digits on both versions. They're
+    /// parsed on the Rust side. `epoch` is compared the same way, against its
+    /// decimal string. Qualifying the table with `schema` (catalog.schema) makes
+    /// the reference independent of the client's default catalog.
     fn epoch_statement(
         schema: &str,
         epoch: u64,
@@ -148,12 +154,13 @@ pub mod trino {
         trino_client::Statement::new(format!(
             "
             SELECT
-                address                                    AS epoch_address,
-                CAST(hnt_rewards_issued AS VARCHAR)        AS hnt_rewards_issued,
-                CAST(delegation_rewards_issued AS VARCHAR) AS delegation_rewards_issued,
-                CAST(rewards_issued_at AS VARCHAR)         AS rewards_issued_at
+                address                                                            AS epoch_address,
+                CAST(CAST(hnt_rewards_issued AS DECIMAL(38, 0)) AS VARCHAR)        AS hnt_rewards_issued,
+                CAST(CAST(delegation_rewards_issued AS DECIMAL(38, 0)) AS VARCHAR) AS delegation_rewards_issued,
+                CAST(CAST(rewards_issued_at AS DECIMAL(38, 0)) AS VARCHAR)         AS rewards_issued_at
             FROM {schema}.sub_dao_epoch_infos
-            WHERE epoch = :epoch AND sub_dao = :sub_dao
+            WHERE CAST(epoch AS DECIMAL(38, 0)) = CAST(:epoch AS DECIMAL(38, 0))
+              AND sub_dao = :sub_dao
             "
         ))
         .bind("epoch", epoch.to_string())
@@ -177,7 +184,10 @@ pub mod trino {
                 "{rendered}"
             );
             // Bound params render as positional placeholders (EXECUTE IMMEDIATE).
-            assert!(rendered.contains("epoch = ?"), "{rendered}");
+            assert!(
+                rendered.contains("CAST(epoch AS DECIMAL(38, 0)) = CAST(? AS DECIMAL(38, 0))"),
+                "{rendered}"
+            );
             assert!(rendered.contains("sub_dao = ?"), "{rendered}");
         }
     }
