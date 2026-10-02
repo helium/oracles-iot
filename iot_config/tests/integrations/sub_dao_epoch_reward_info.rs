@@ -4,7 +4,9 @@
 //! Production targets `solana.public.sub_dao_epoch_infos` (a PostgreSQL-connector
 //! catalog). The harness only serves Iceberg tables in a per-test catalog, so the
 //! table is recreated with all columns as varchar — matching how the indexer's
-//! numerics surface — and the query is pointed at `<catalog>.public`.
+//! numerics surface on Trino <= 479 — and the query is pointed at
+//! `<catalog>.public`. `sub_dao_epoch_reward_info_postgres` covers the real
+//! Postgres column types.
 
 use crate::common::chain_trino::{
     harness_with_sub_dao, seed_sub_dao, solana_schema, sub_dao_row, trino_client, IOT_SUB_DAO,
